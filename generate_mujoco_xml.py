@@ -20,14 +20,26 @@ def get_file_name(file_dir_):
     return file_list
 
 if __name__ == '__main__':
-    #设置生成scene_num个场景
-    scene_num = 11
-    #为每个场景随机抽取出k个模型进行仿真
-    select_k = 10
+
+    #外部输入夹爪型号标注
+    if len(sys.argv) > 3:
+        gripper_name = sys.argv[1]
+        #为每个场景随机抽取出k个模型进行仿真
+        select_k=sys.argv[2]
+        #设置生成scene_num个场景
+        scene_num=sys.argv[3]
+    else:
+        #默认panda夹爪
+        gripper_name = "panda"
+        select_k = 10
+        scene_num = 11
+
+    print("为{}生成{}帧场景，每帧{}个物体".format(gripper_name,scene_num,select_k))
+
     home_dir = os.environ['HOME']
 
     #设定legal_meshes的路径记录文件地址
-    legal_meshes_pickle = home_dir+'/dataset/YCB/panda/legal_meshes_for_panda.pickle'
+    legal_meshes_pickle = home_dir+'/dataset/simulate_grasp_dataset/'+gripper_name+'/legal_meshes.pickle'
     #读取legal_meshes的路径记录文件
     with open(legal_meshes_pickle,'rb') as mesh:
         mesh_list=pickle.load(mesh)
@@ -39,7 +51,7 @@ if __name__ == '__main__':
 
 
     #场景文件夹主目录
-    scenes_dir = home_dir+'/dataset/YCB/panda/scenes/'
+    scenes_dir = home_dir+'/dataset/simulate_grasp_dataset/panda/scenes/'
 
 
     xml_template_string = """

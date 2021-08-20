@@ -26,18 +26,19 @@ def copy_stls(srcfile,dstpath):
         stl_name = srcfile.split('/')[-3]
         if not os.path.exists(dstpath):
             os.makedirs(dstpath)
+            #将源文件拷贝到指定文件夹中，同时修改为指定的名称
         shutil.copyfile(srcfile,dstpath+stl_name+".stl")
 
 if __name__ == '__main__':
 
     home_dir = os.environ['HOME']
     #注意是16k分辨率的文件夹
-    ycb_16k = home_dir + "/dataset/YCB/ycb/ycb_16k/"   
-    copy_to = home_dir + "/dataset/YCB/ycb/all_16k_stls/" 
-    ycb_16k_stls = get_file_name(ycb_16k)   #返回所有cad模型所处的文件夹的路径列表
+    google_16k = home_dir + "/dataset/simulate_grasp_dataset/ycb/google_16k/"   
+    copy_to = home_dir + "/dataset/simulate_grasp_dataset/ycb/all_16k_stls/" 
+    google_16k_stls = get_file_name(google_16k)   #返回所有cad模型所处的文件夹的路径列表
 
     #复制所有16k mesh模型到指定目录，并替换为规定的名字
-    for ycb_16k_stl in ycb_16k_stls:
-        copy_stls(ycb_16k_stl,copy_to)
+    for google_16k_stl in google_16k_stls:
+        copy_stls(google_16k_stl,copy_to)
     
 

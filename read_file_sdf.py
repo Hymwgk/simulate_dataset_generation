@@ -55,7 +55,7 @@ def generate_obj_from_ply(file_name_):
 if __name__ == '__main__':
     home_dir = os.environ['HOME']
     #设置obj  ply文件的路径
-    file_dir =home_dir + "/dataset/YCB/ycb/"# for google ycb
+    file_dir =home_dir + "/dataset/simulate_grasp_dataset/ycb/google_512k/"# for google ycb
     path_sdfgen = home_dir + "/code/SDFGen/bin/SDFGen"
     file_list_all = get_file_name(file_dir)
     object_numbers = file_list_all.__len__()

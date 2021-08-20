@@ -53,7 +53,7 @@ def do_job(i):      #处理函数  处理index=i的模型
     worker(i, 100, 5,20, 30,good_grasp)
 
     #存放结果文件的路径&名称
-    good_grasp_file_name =  os.environ['HOME']+"/dataset/YCB/{}/grasp_sampled/{}_{}".format(gripper_name, str(object_name), str(len(good_grasp)))
+    good_grasp_file_name =  os.environ['HOME']+"/dataset/simulate_grasp_dataset/{}/grasp_sampled/{}_{}".format(gripper_name, str(object_name), str(len(good_grasp)))
     
     #创建一个pickle文件，将good_grasp保存起来
     with open(good_grasp_file_name + '.pickle', 'wb') as f:
@@ -164,7 +164,7 @@ if __name__ == '__main__':
         gripper_name = "panda"
     home_dir = os.environ['HOME']
     #存放CAD模型的文件夹
-    file_dir = home_dir + "/dataset/YCB/ycb/"   #获取模型的路径
+    file_dir = home_dir + "/dataset/simulate_grasp_dataset/ycb/"   #获取模型的路径
     file_list_all = get_file_name(file_dir)   #返回所有cad模型所处的文件夹的路径列表
     object_numbers = file_list_all.__len__()  #获取cad模型的数量
 

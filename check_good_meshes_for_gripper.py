@@ -18,10 +18,17 @@ def get_stls_path(file_dir_):
     return file_list
 
 if __name__ == '__main__':
+    if len(sys.argv) > 1:
+        gripper_name = sys.argv[1]
+    else:
+        #默认panda夹爪
+        gripper_name = "panda"
 
+    print("Check good meshes for {}.".format(gripper_name))
+    
     home_dir = os.environ['HOME']
-    meshes_16k_dir = home_dir+"/dataset/YCB/ycb/all_16k_stls"
-    target = home_dir+"/dataset/YCB/panda/legal_meshes_for_panda.pickle"
+    meshes_16k_dir = home_dir+"/dataset/simulate_grasp_dataset/ycb/all_16k_stls"
+    target = home_dir+"/dataset/simulate_grasp_dataset/"+gripper_name+"/good_meshes.pickle"
 
     stls_path_list = get_stls_path(meshes_16k_dir)
 

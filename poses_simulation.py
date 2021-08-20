@@ -43,13 +43,18 @@ def get_meshes_dir(xml_string):
 
 
 if __name__ == '__main__':
+    if len(sys.argv) > 1:
+        gripper_name = sys.argv[1]
+    else:
+        #默认panda夹爪
+        gripper_name = "panda"
+
     home_dir = os.environ['HOME']
 
-    
-    scenes_dir = home_dir+"/dataset/YCB/panda/scenes"
+    scenes_dir = home_dir+"/dataset/simulate_grasp_dataset/"+gripper_name+"/scenes"
     #获取所有场景的xml文件的路径列表
     scenes_xml_path_list = get_file_name(scenes_dir)
-    print("找到{}帧场景".format(len(scenes_xml_path_list)))
+    print("为夹爪{}找到{}帧场景".format(gripper_name,len(scenes_xml_path_list)))
     #用于debug
     #simulate_file = scene_xml_dir+"test.xml"
 
