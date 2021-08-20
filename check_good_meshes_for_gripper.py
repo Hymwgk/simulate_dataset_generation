@@ -24,7 +24,7 @@ if __name__ == '__main__':
         #默认panda夹爪
         gripper_name = "panda"
 
-    print("Check good meshes for {}.".format(gripper_name))
+    print("Checking good meshes for {}.".format(gripper_name))
     
     home_dir = os.environ['HOME']
     meshes_16k_dir = home_dir+"/dataset/simulate_grasp_dataset/ycb/all_16k_stls"

@@ -14,7 +14,7 @@
 │   ├── antipodal_grasps#针对panda夹爪尺寸参数，对google_512k中的所有模型都进行Antipodal采样
 │   │   └── Readme.txt
 │   ├── gripper_params#panda 夹爪的尺寸参数
-│   ├── legal_meshes_for_panda.pickle#仿真后，处于桌面上的物体的mesh(路径)列表
+│   ├── good_meshes.pickle#对于panda夹爪，具有足够多优质抓取的mesh集合
 │   └── scenes#虚拟的
 │       ├── 0#存放第0帧场景相关文件的文件夹，
 │       ├── 1

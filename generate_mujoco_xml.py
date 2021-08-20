@@ -39,7 +39,7 @@ if __name__ == '__main__':
     home_dir = os.environ['HOME']
 
     #设定legal_meshes的路径记录文件地址
-    legal_meshes_pickle = home_dir+'/dataset/simulate_grasp_dataset/'+gripper_name+'/legal_meshes.pickle'
+    legal_meshes_pickle = home_dir+'/dataset/simulate_grasp_dataset/'+gripper_name+'/good_meshes.pickle'
     #读取legal_meshes的路径记录文件
     with open(legal_meshes_pickle,'rb') as mesh:
         mesh_list=pickle.load(mesh)
