@@ -1,6 +1,12 @@
-# Simulate  Grasp Dataset Generation
+# Simulate  Grasp Dataset Generation （未完成版）
 
 本代码实现的主要功能是：
+
+1. 针对指定夹爪，对YCB数据集中的mesh模型进行Antipodal抓取采样
+
+2. 从YCB数据集中随机抽取指定数量的mesh模型，进行Mujoco物理仿真，获取各个物体的虚拟姿态
+
+   
 
 
 
@@ -77,12 +83,25 @@
    python  read_file_sdf.py
    ```
 
-5. 为panda夹爪采样生成抓取，抓取结果将会被自动存放在`~/dataset/simulate_grasp_dataset/panda/antipodal_grasps/`路径下  **还未完善**
+5. 为panda夹爪采样生成抓取，抓取结果将会被自动存放在`~/dataset/simulate_grasp_dataset/panda/antipodal_grasps/`路径下，此步骤执行时间较长
 
-   ```bash
-   python  generate-dataset-canny.py    panda   #夹爪名称
-   ```
+   有两个py脚本，两种采样方法都是Antipodal，但是并行计算结构不同：
 
+   - `sample_grasps_for_meshes.py`  单次只对一个物体进行并行多进程采样(优先使用该方法)  **（把要修改的参数暴露出来，并解释说明，还未完善）**
+
+     第一次运行将在`~/dataset/simulate_grasp_dataset/panda/antipodal_grasps/`路径下生成`original_<object_name>.pickle`形式的未经过处理的抓取采样文件，并在同一路径下生成`<object_name>.pickle`与`<object_name>.npy`两种形式的最终筛选文件，该筛选文件主要是对分数区间进行划分，剔除了各个区间内部的冗余抓取。以后再次执行的时候，就会预先读取文件夹内部的`original_<object_name>.pickle`初始采样文件，并进行冗余剔除处理。
+
+     ```bash
+     python sample_grasps_for_meshes.py  panda#夹爪名称
+     ```
+
+   - `generate-dataset-canny.py`  旧版本的采样方法，同时对多个物体采样，每个物体只分配一个进程
+
+     ```bash
+     python  generate-dataset-canny.py    panda   #夹爪名称
+     ```
+
+     
 
 6. 由于夹爪尺寸限制，有些模型采样得到的抓取较少，需要根据模型抓取采样结果的好坏多少，筛选出适合该特定夹爪的模型子集合用于场景仿真，它会在`~/dataset/simulate_grasp_dataset/panda/`文件夹下生成名为`good_meshes.pickle`的文件    **还未完善，需要等到上面的抓取生成后才行**
 
@@ -96,7 +115,7 @@
    python  generate_mujoco_xml.py   panda    10   100   #夹爪名称    每个场景中包含10个物体    生成100个场景
    ```
 
-8. 利用Mujoco对各场景xml进行仿真，筛选出停留在桌子上的物体，保留这些合法物体的列表以及相应稳定位姿，将会在每一帧的文件夹中生成`legal_meshes.pickle`以及`legal_poses.npy`两个文件
+8. 利用Mujoco对各场景xml进行仿真，筛选出停留在桌子上的物体，保留这些合法物体的列表以及相应稳定位姿，将会在每一帧的文件夹中生成`legal_meshes.pickle`以及`legal_poses.npy`两个文件   
 
    ```bash
    python  poses_simulation.py   panda   #夹爪名称
@@ -106,11 +125,14 @@
 
 
 
+## 物理场景仿真结果示例
+
+![image-20210822213152685](README.assets/image-20210822213152685.png)
 
 
 
+![image-20210822213301952](README.assets/image-20210822213301952.png)
 
+![image-20210822213339895](README.assets/image-20210822213339895.png)
 
-
-
-
+![image-20210822213507885](README.assets/image-20210822213507885.png)

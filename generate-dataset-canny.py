@@ -47,8 +47,12 @@ def do_job(i):      #处理函数  处理index=i的模型
     good_grasp=[]
 
     #对CAD模型进行Antipod采样，将采样的抓取结果放到good_grasp中
-    #worker(i, sample_nums_per_round, max_iter_per_round,
-    #                    mini_grasp_amount_per_score,max_rounds, good_grasp)
+    #worker(
+    # i,   处理第i个模型
+    # sample_nums_per_round,  
+    # max_iter_per_round,
+    # mini_grasp_amount_per_score, 
+    # max_rounds, good_grasp)
     #worker(i, 100, 5,20, 30,good_grasp)
     worker(i, 100, 5,20, 30,good_grasp)
 
@@ -82,18 +86,20 @@ def worker(i, sample_nums_per_round, max_iter_per_round,
     object_name = file_list_all[i].split('/')[-1]  
     print('a worker of task {} start, index = {}'.format(object_name, i))    
 
-    #读取初始配置文件，读取并在内存中复制了一份, 这个不是夹爪的尺寸配置
+    #读取采样器初始化配置文件
     yaml_config = YamlConfig(home_dir + "/code/dex-net/test/config.yaml")
-    #根据设置的夹爪名称加载夹爪尺寸等参数
+    #加载夹爪配置参数，初始化夹爪对象
     gripper = RobotGripper.load(gripper_name, home_dir + "/code/dex-net/data/grippers") 
+
     #设置抓取采样的方法
     grasp_sample_method = "antipodal"
+
     if grasp_sample_method == "uniform":
         grasp_sampler = UniformGraspSampler(gripper, yaml_config)
     elif grasp_sample_method == "gaussian":
         grasp_sampler = GaussianGraspSampler(gripper, yaml_config)
     elif grasp_sample_method == "antipodal":
-        #使用对映点抓取，输入夹爪与配置文件
+        #读取夹爪对象与采样器配置，初始化指定的采样器
         grasp_sampler = AntipodalGraspSampler(gripper, yaml_config)
     elif grasp_sample_method == "gpg":
         grasp_sampler = GpgGraspSampler(gripper, yaml_config)
@@ -164,7 +170,7 @@ if __name__ == '__main__':
         gripper_name = "panda"
     home_dir = os.environ['HOME']
     #存放CAD模型的文件夹
-    file_dir = home_dir + "/dataset/simulate_grasp_dataset/ycb/"   #获取模型的路径
+    file_dir = home_dir + "/dataset/simulate_grasp_dataset/ycb/google_512k/"   #获取模型的路径
     file_list_all = get_file_name(file_dir)   #返回所有cad模型所处的文件夹的路径列表
     object_numbers = file_list_all.__len__()  #获取cad模型的数量
 
