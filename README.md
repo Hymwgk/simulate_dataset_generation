@@ -47,7 +47,11 @@
 
 1. 安装修改后的dex-net
 
-2. 克隆本仓库代码到任意路径下
+2. 安装mujoco
+
+3. 安装blensor虚拟点云生成工具
+
+4. 克隆本仓库代码到任意路径下
 
    ```bash
    git clone https://github.com/Hymwgk/simulate_dataset_generation.git
@@ -71,25 +75,29 @@
    python  ycb_download.py   #python2
    ```
 
-3. 由于mujoco的场景xml文件，要求一个场景中所有的mesh文件都处于同一个文件夹中，所以为了方便mujoco读取模型，需要将仿真需要的16k分辨率文件拷贝到一个统一的`~/dataset/simulate_grasp_dataset/ycb/all_16k_stls/`文件夹中
+3. 由于mujoco的场景xml文件，要求一个场景中所有的mesh文件都处于同一个文件夹中，所以为了方便mujoco读取模型，需要将仿真需要的16k分辨率文件拷贝到一个统一的`~/dataset/simulate_grasp_dataset/ycb/all_16k_meshes/`文件夹中
 
    ```bash
-   python  copy_all_stls.py 
+   python  copy_all_meshes.py 
    ```
 
-4. 为`~/dataset/simulate_grasp_dataset/ycb/google_512k/`文件夹下的模型生成sdf文件
+4. 下载的桌子等背景模型，并拷贝到`all_16k_meshes`文件夹中
+
+   
+   
+5. 为`~/dataset/simulate_grasp_dataset/ycb/google_512k/`文件夹下的模型生成sdf文件
 
    ```bash
    python  read_file_sdf.py
    ```
 
-5. 为panda夹爪采样生成抓取，抓取结果将会被自动存放在`~/dataset/simulate_grasp_dataset/panda/antipodal_grasps/`路径下，此步骤执行时间较长
+6. 为panda夹爪采样生成抓取，抓取结果将会被自动存放在`~/dataset/simulate_grasp_dataset/panda/antipodal_grasps/`路径下，此步骤执行时间较长
 
    有两个py脚本，两种采样方法都是Antipodal，但是并行计算结构不同：
 
    - `sample_grasps_for_meshes.py`  单次只对一个物体进行并行多进程采样(优先使用该方法)  **（把要修改的参数暴露出来，并解释说明，还未完善）**
 
-     第一次运行将在`~/dataset/simulate_grasp_dataset/panda/antipodal_grasps/`路径下生成`original_<object_name>.pickle`形式的未经过处理的抓取采样文件，并在同一路径下生成`<object_name>.pickle`与`<object_name>.npy`两种形式的最终筛选文件，该筛选文件主要是对分数区间进行划分，剔除了各个区间内部的冗余抓取。以后再次执行的时候，就会预先读取文件夹内部的`original_<object_name>.pickle`初始采样文件，并进行冗余剔除处理。
+     第一次运行将在`~/dataset/simulate_grasp_dataset/panda/antipodal_grasps/`路径下生成`original_<object_name>.pickle`形式的未经过处理的抓取采样文件，并在同一路径下生成`<object_name>.pickle`与`<object_name>.npy`两种形式的最终筛选文件，该筛选文件主要是对分数区间进行划分，剔除了各个区间内部的冗余抓取。以后再次执行的时候，会优先读取文件夹内部的`original_<object_name>.pickle`初始采样文件，并进行冗余剔除处理。
 
      ```bash
      python sample_grasps_for_meshes.py  panda#夹爪名称
@@ -103,29 +111,56 @@
 
      
 
-6. 由于夹爪尺寸限制，有些模型采样得到的抓取较少，需要根据模型抓取采样结果的好坏多少，筛选出适合该特定夹爪的模型子集合用于场景仿真，它会在`~/dataset/simulate_grasp_dataset/panda/`文件夹下生成名为`good_meshes.pickle`的文件    **还未完善，需要等到上面的抓取生成后才行**
+7. 由于夹爪尺寸限制，有些模型采样得到的抓取较少，需要根据模型抓取采样结果的好坏多少，筛选出适合该特定夹爪的模型子集合用于场景仿真，它会在`~/dataset/simulate_grasp_dataset/panda/`文件夹下生成名为`good_meshes.pickle`的文件    **还未完善，需要等到上面的抓取生成后才行**
+
+   可以考虑：并不一定非要每种物体只有一个，可以把一些物体，重复几次
 
    ```bash
    python  check_good_meshes_for_gripper.py    panda #夹爪名称
    ```
 
-7. 从上一步筛选的合法模型子集中，随机抽取指定数量的模型，为Mujoco生成指定数量的模拟场景xml配置文件
+8. 从上一步筛选的合法模型子集中，随机抽取指定数量的模型，为Mujoco生成指定数量的模拟场景xml配置文件
 
    ```bash
    python  generate_mujoco_xml.py   panda    10   100   #夹爪名称    每个场景中包含10个物体    生成100个场景
    ```
 
-8. 利用Mujoco对各场景xml进行仿真，筛选出停留在桌子上的物体，保留这些合法物体的列表以及相应稳定位姿，将会在每一帧的文件夹中生成`legal_meshes.pickle`以及`legal_poses.npy`两个文件   
+9. 读取各个场景的xml配置文件，利用Mujoco进行仿真，筛选出停留在桌子上的物体，保留这些合法物体的列表以及相应稳定位姿，将会在每一帧的文件夹中生成两个文件：
+
+   - `legal_meshes.pickle`  仿真过程中，物体可能掉出指定的桌面（非法），留在桌面上的物体为合法模型，将它们的模型路径记在此文件中
+
+   - `legal_poses.npy`       合法模型仿真结束后的姿态
+
+   上面的两个文件是为了后续使用BlenSor进行点云仿真的时候使用的，因此`legal_meshes.pickle` 中的路径包含的是合法物体的`.obj`格式路径，同时也包含桌子的路径，因为后续仿真也需要桌子。
+
+   另外，这一个步骤有一定的概率失败，可能会读取到某个场景的时候失败
+
+   
 
    ```bash
    python  poses_simulation.py   panda   #夹爪名称
    ```
 
-   
+10.  多进程渲染目标场景
+
+    ```bash
+    ~/.blensor/./blender  -P  ~/code/simulate_dataset_generation/raw_pc_generate.py     panda
+    ```
+
+    
 
 
 
 ## 物理场景仿真结果示例
+
+启动仿真器
+
+```bash
+cd /home/wgk/.mujoco/mujoco200/bin
+./simulate
+```
+
+
 
 ![image-20210822213152685](README.assets/image-20210822213152685.png)
 

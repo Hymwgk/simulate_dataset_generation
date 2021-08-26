@@ -54,8 +54,7 @@ if __name__ == '__main__':
     scenes_dir = home_dir+'/dataset/simulate_grasp_dataset/panda/scenes/'
 
 
-    xml_template_string = """
-    <?xml version="1.0" ?>
+    xml_template_string = """<?xml version="1.0" ?>
     <mujoco model="MuJoCo Model">
         <!-- 设置角度用弧度制，设定mesh文件夹路径 -->
         <compiler angle="radian" meshdir=/>
@@ -73,7 +72,7 @@ if __name__ == '__main__':
             <texture type="2d" name="texplane" builtin="checker" mark="cross" rgb1="0.2 0.3 0.4" rgb2="0.1 0.15 0.2" markrgb="0.8 0.8 0.8" width="512" height="512"/>
             <material name="matplane" texture="texplane" texuniform="true" reflectance="0.3"/>
             <!-- 桌子的模型 -->
-            <mesh name="bg_table" file="bg_table1.stl"/>
+            <mesh name="bg_table" file="bg_table.stl"/>
             <!-- 四块桌子围栏的模型 -->
             <mesh name="bg_table_fance1" file="bg_table_fance.stl"/>
             <mesh name="bg_table_fance2" file="bg_table_fance.stl"/>

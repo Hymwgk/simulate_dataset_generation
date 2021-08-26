@@ -25,7 +25,7 @@ def get_mesh_list(xml_string):
     xml_string_list = xml_string.split('\n')
     for string in xml_string_list:
         if string.find('<mesh')!=-1:
-            mesh_name = string.split('\"')[-2]
+            mesh_name = string.split('\"')[-2].split('.')[0]
             #去除背景mesh
             if mesh_name.find('bg_')==-1:
                 #名称带有后缀，比如   mesh1.stl  
@@ -39,6 +39,25 @@ def get_meshes_dir(xml_string):
         if string.find('meshdir=')!=-1:
             meshes_dir = string.split('\"')[-2]
     return meshes_dir
+
+def get_table_pose(xml_string):
+    strings=[]
+    #按照回车分割
+    strings = xml_string.split('\n')
+    for string in strings:
+        if string.find('<body name="table"')!=-1:
+            pos_string = string.split('\"')[3].split()
+            quat_string = string.split('\"')[5].split()
+            pos = [float(x) for x in pos_string]
+            quat = [float(x) for x in quat_string]
+
+            pos = np.array(pos)
+            quat =  np.array(quat)
+            pose = np.concatenate((pos,quat))
+            break
+
+    return pose
+
 
 
 
@@ -58,6 +77,7 @@ if __name__ == '__main__':
     #用于debug
     #simulate_file = scene_xml_dir+"test.xml"
 
+
     for scene_i_xml_path in scenes_xml_path_list:
         #读取场景i的 xml内容
         with open(scene_i_xml_path,'r') as f:
@@ -69,9 +89,13 @@ if __name__ == '__main__':
         #存放scene_i_xml文件的文件夹地址
         scene_i_xml_root_path,_= os.path.split(scene_i_xml_path)
 
+        #获得背景中的桌子的姿态，一会而添加到姿态列表中
+        table_pose = get_table_pose(scene_i_xml_string)
+
+
         #根据xml创建仿真器
         model = mujoco_py.load_model_from_path(scene_i_xml_path)
-        print("load {}".format(scene_i_xml_path.split('/')[-1]))
+        print("Simulating {}".format(scene_i_xml_path.split('/')[-1]))
         #对该模型创建模拟器对象, 迭代次数为1000，step可以简单认为是时间间隔
         #选择一个足够长的step，保证每个物体有足够时间落在指定的桌面上
         #有时候例如圆柱体会在桌面滚动
@@ -105,12 +129,21 @@ if __name__ == '__main__':
         mesh_on_table = pos_now[:,2]>0.5  #找到稳定姿态的高度低于0.5m的mesh
         #抽取出满足某个条件的行（保留合法的姿态）
         pos_legal = pos_now[mesh_on_table,:]
+        table_pose=np.reshape(table_pose,(-1,7))
+        #拼接起来啊
+        pos_legal = np.concatenate((table_pose,pos_legal),axis = 0)
+
+
+
         #保留合法的mesh名称（带有路径）
         mesh_legal = []
+        #首先把桌子的路径先加上去
+        mesh_legal.append(os.path.join(scene_i_meshes_dir,'bg_table.obj'))
+        #检索桌面上的物体
         for index,item  in enumerate(mesh_on_table):
             if item:
-                mesh_legal.append(os.path.join(scene_i_meshes_dir,scene_i_meshes_list[index]))
-
+                mesh_legal.append(os.path.join(scene_i_meshes_dir,scene_i_meshes_list[index]+'.obj'))
+        
         #直接用pickel保存合法list
         with open(os.path.join(scene_i_xml_root_path,"legal_meshes.pickle"),'wb') as f:
             pickle.dump(mesh_legal, f)

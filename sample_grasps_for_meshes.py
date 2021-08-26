@@ -182,7 +182,7 @@ if __name__ == '__main__':
 
             #获得计算机的核心数
             cores = multiprocessing.cpu_count()
-            #在这里修改同时使用多少个进程执行采样
+            #在这里修改同时使用多少个进程执行采样，最好不超过计算机的核心数
             processes_num = 10
 
             pool =[]

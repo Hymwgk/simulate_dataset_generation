@@ -27,7 +27,7 @@ if __name__ == '__main__':
     print("Checking good meshes for {}.".format(gripper_name))
     
     home_dir = os.environ['HOME']
-    meshes_16k_dir = home_dir+"/dataset/simulate_grasp_dataset/ycb/all_16k_stls"
+    meshes_16k_dir = home_dir+"/dataset/simulate_grasp_dataset/ycb/all_16k_meshes"
     target = home_dir+"/dataset/simulate_grasp_dataset/"+gripper_name+"/good_meshes.pickle"
 
     stls_path_list = get_stls_path(meshes_16k_dir)
