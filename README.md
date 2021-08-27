@@ -100,13 +100,13 @@
      第一次运行将在`~/dataset/simulate_grasp_dataset/panda/antipodal_grasps/`路径下生成`original_<object_name>.pickle`形式的未经过处理的抓取采样文件，并在同一路径下生成`<object_name>.pickle`与`<object_name>.npy`两种形式的最终筛选文件，该筛选文件主要是对分数区间进行划分，剔除了各个区间内部的冗余抓取。以后再次执行的时候，会优先读取文件夹内部的`original_<object_name>.pickle`初始采样文件，并进行冗余剔除处理。
 
      ```bash
-     python sample_grasps_for_meshes.py  panda#夹爪名称
+     python sample_grasps_for_meshes.py  --gripper  panda#夹爪名称
      ```
 
    - `generate-dataset-canny.py`  旧版本的采样方法，同时对多个物体采样，每个物体只分配一个进程
 
      ```bash
-     python  generate-dataset-canny.py    panda   #夹爪名称
+     python  generate-dataset-canny.py    --gripper panda   #夹爪名称
      ```
 
      
@@ -116,18 +116,18 @@
    可以考虑：并不一定非要每种物体只有一个，可以把一些物体，重复几次
 
    ```bash
-   python  check_good_meshes_for_gripper.py    panda #夹爪名称
+   python  check_good_meshes_for_gripper.py  --gripper   panda #夹爪名称
    ```
 
 8. 从上一步筛选的合法模型子集中，随机抽取指定数量的模型，为Mujoco生成指定数量的模拟场景xml配置文件
 
    ```bash
-   python  generate_mujoco_xml.py   panda    10   100   #夹爪名称    每个场景中包含10个物体    生成100个场景
+   python  generate_mujoco_xml.py  --gripper panda   --mesh_num  10   --scene_num  100   #夹爪名称    每个场景中包含10个物体    生成100个场景
    ```
 
 9. 读取各个场景的xml配置文件，利用Mujoco进行仿真，筛选出停留在桌子上的物体，保留这些合法物体的列表以及相应稳定位姿，将会在每一帧的文件夹中生成两个文件：
 
-   - `legal_meshes.pickle`  仿真过程中，物体可能掉出指定的桌面（非法），留在桌面上的物体为合法模型，将它们的模型路径记在此文件中
+   - `legal_meshes.pickle`  稳定姿态位于桌面上的模型列表，记为合法模型（因为仿真过程中，物体可能由于某些原因，掉出指定的桌面，比如反弹出去）
 
    - `legal_poses.npy`       合法模型仿真结束后的姿态
 
@@ -137,14 +137,28 @@
 
    
 
+   更新：已经将上面的两个文件合并在了一起，名为`table_meshes_with_pose.pickle`
+
+   
+
    ```bash
-   python  poses_simulation.py   panda   #夹爪名称
+   python  poses_simulation.py   --gripper  panda   #夹爪名称
    ```
 
-10.  多进程渲染目标场景
+10.  多进程渲染目标场景，这一步骤的夹爪需要在代码中改动，因为有个外部参数 `-P` 很麻烦
 
     ```bash
-    ~/.blensor/./blender  -P  ~/code/simulate_dataset_generation/raw_pc_generate.py     panda
+    ~/.blensor/./blender  -P   ~/code/simulate_dataset_generation/raw_pc_generate.py    
+    ```
+
+11. 查看对应夹爪文件夹下面的 
+
+    `--gripper`  指定夹爪名称，默认panda
+
+    `--show`     直接选择单独查看哪个场景，是文件夹的编号（非0），如果空白则从第0帧开始播放，直到所有点云播放完毕
+
+    ```bash
+    python  show_raw_pc.py  --gripper  panda  --show  5   #单独查看第5帧点云
     ```
 
     

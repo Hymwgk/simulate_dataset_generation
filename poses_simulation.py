@@ -5,7 +5,12 @@ import random
 import numpy as np
 import mujoco_py
 import pickle
+import argparse
 
+#解析命令行参数
+parser = argparse.ArgumentParser(description='Simulate poses for meshes')
+parser.add_argument('--gripper', type=str, default='panda')
+args = parser.parse_args()
 
 def get_file_name(file_dir_):  
     file_list = []
@@ -62,11 +67,8 @@ def get_table_pose(xml_string):
 
 
 if __name__ == '__main__':
-    if len(sys.argv) > 1:
-        gripper_name = sys.argv[1]
-    else:
-        #默认panda夹爪
-        gripper_name = "panda"
+
+    gripper_name = args.gripper
 
     home_dir = os.environ['HOME']
 
@@ -144,11 +146,16 @@ if __name__ == '__main__':
             if item:
                 mesh_legal.append(os.path.join(scene_i_meshes_dir,scene_i_meshes_list[index]+'.obj'))
         
-        #直接用pickel保存合法list
-        with open(os.path.join(scene_i_xml_root_path,"legal_meshes.pickle"),'wb') as f:
-            pickle.dump(mesh_legal, f)
+
         #使用npy保存位置合法姿态列表
-        np.save(os.path.join(scene_i_xml_root_path,"legal_poses.npy"),pos_legal)
+        #np.save(os.path.join(scene_i_xml_root_path,"legal_poses.npy"),pos_legal)
+
+        #直接用pickel保存
+        table_meshes_with_pose=(mesh_legal,pos_legal)
+        with open(os.path.join(scene_i_xml_root_path,"table_meshes_with_pose.pickle"),'wb') as f:
+            pickle.dump(table_meshes_with_pose, f)
+
+
 
         #保存稳定后的场景,仅仅用于debug
         #f= open(simulate_file,'w+')

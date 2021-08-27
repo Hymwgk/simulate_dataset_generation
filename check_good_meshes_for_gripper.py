@@ -4,6 +4,13 @@
 import  os
 import sys
 import pickle
+import argparse
+
+#解析命令行参数
+parser = argparse.ArgumentParser(description='Check good meshes')
+parser.add_argument('--gripper', type=str, default='panda')
+args = parser.parse_args()
+
 
 #返回all_16k_stls文件夹下除了背景模型的其他所有stl路径
 def get_stls_path(file_dir_):  
@@ -18,11 +25,8 @@ def get_stls_path(file_dir_):
     return file_list
 
 if __name__ == '__main__':
-    if len(sys.argv) > 1:
-        gripper_name = sys.argv[1]
-    else:
-        #默认panda夹爪
-        gripper_name = "panda"
+
+    gripper_name = args.gripper
 
     print("Checking good meshes for {}.".format(gripper_name))
     

@@ -2,6 +2,10 @@ import numpy as np
 import sys
 import multiprocessing
 
+a =200
+max_digits = 5
+print(str(a).zfill(5))
+
 
 def do_job(job_id):      #处理函数  处理index=i的模型
     grasps_with_score_ = range(5)

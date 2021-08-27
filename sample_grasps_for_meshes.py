@@ -25,6 +25,13 @@ import multiprocessing
 import matplotlib.pyplot as plt
 plt.switch_backend('agg')  # for the convenient of run on remote computer
 
+import argparse
+
+#解析命令行参数
+parser = argparse.ArgumentParser(description='Sample grasp for meshes')
+parser.add_argument('--gripper', type=str, default='panda')
+args = parser.parse_args()
+
 #sys.path()
 
 #输入文件夹地址，返回一个列表，其中保存的是文件夹中的文件名称
@@ -122,13 +129,8 @@ def redundant_check(grasps_with_score,mini_grasp_amount_per_score):
 
 
 if __name__ == '__main__':
-    #外部输入夹爪型号标注
-    if len(sys.argv) > 1:
-        gripper_name = sys.argv[1]
-    else:
-        #默认panda夹爪
-        gripper_name = "panda"
 
+    gripper_name=args.gripper
     home_dir = os.environ['HOME']
     
     #存放CAD模型的文件夹

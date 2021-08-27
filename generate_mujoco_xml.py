@@ -3,10 +3,19 @@
 #将生成的xml文件，分别保存在各自的场景文件夹中
 #
 import  os
+from string import digits
 import sys
 import random
 import numpy as np
 import pickle
+import argparse
+
+#解析命令行参数
+parser = argparse.ArgumentParser(description='Generate Mujoco xml files')
+parser.add_argument('--gripper', type=str, default='panda')
+parser.add_argument('--mesh_num', type=int, default=10)
+parser.add_argument('--scene_num', type=int, default=10)
+args = parser.parse_args()
 
 
 def get_file_name(file_dir_):  
@@ -21,20 +30,17 @@ def get_file_name(file_dir_):
 
 if __name__ == '__main__':
 
-    #外部输入夹爪型号标注
-    if len(sys.argv) > 3:
-        gripper_name = sys.argv[1]
-        #为每个场景随机抽取出k个模型进行仿真
-        select_k=sys.argv[2]
-        #设置生成scene_num个场景
-        scene_num=sys.argv[3]
-    else:
-        #默认panda夹爪
-        gripper_name = "panda"
-        select_k = 10
-        scene_num = 11
+    #夹爪名称
+    gripper_name = args.gripper
+    #场景中模型数量
+    mesh_num = args.mesh_num
+    #场景数量
+    scene_num = args.scene_num
 
-    print("为{}生成{}帧场景，每帧{}个物体".format(gripper_name,scene_num,select_k))
+
+    print("为{}生成{}帧场景，每帧{}个物体".format(gripper_name,scene_num,mesh_num))
+    #获取最大的位数，用来补0
+    max_digits = len(str(scene_num))
 
     home_dir = os.environ['HOME']
 
@@ -123,7 +129,7 @@ if __name__ == '__main__':
         #打乱mesh_list顺序
         random.shuffle(mesh_list)
         #截取指定的k个文件,抽选子集
-        mesh_list_ = mesh_list[:select_k]
+        mesh_list_ = mesh_list[:mesh_num]
 
         xml_string = xml_template_string
 
@@ -134,7 +140,7 @@ if __name__ == '__main__':
         xml_string = temp_string.join(temp_list)
         #===修改asset标签，导入stl模型
         temp_string=""
-        for i in range(select_k):
+        for i in range(mesh_num):
             temp_string +="     <mesh file=\""+mesh_list_[i]+".stl\" />\n"
         #查找mesh标签并分割
         temp_list = xml_string.split("     <mesh/>\n")
@@ -148,7 +154,7 @@ if __name__ == '__main__':
         #最大可以检测10轮
         for _ in range(maximum_rounds):
             #对每个物体进行采样
-            for i in range(select_k):
+            for i in range(mesh_num):
                 #每个物体最大可以采样20次
                 for j in range(20):
                     #采样的约束范围
@@ -170,18 +176,18 @@ if __name__ == '__main__':
                             pos_group = np.concatenate((pos_group,pos),axis=0)
                             break
             #如果采样出的合法位置少于要求的数量
-            if pos_group.shape[0]<select_k:
+            if pos_group.shape[0]<mesh_num:
                 #清除本轮的内容
                 pos_group = np.empty([1,3])
                 continue
             else:#已经都检测出合适的位置了，就退出
                 break
         #如果所有轮数都检测完了，还是没有齐全，就报错
-        if pos_group.shape[0]<select_k:
+        if pos_group.shape[0]<mesh_num:
             print("初始位置检测失败，修改初始位置约束范围或减少场景模型数量")
     
         #开始根据随机抽选的模型以及初始位置替换xml中具体内容    
-        for i in range(select_k):
+        for i in range(mesh_num):
             pos = str(pos_group[i][0])+" "+str(pos_group[i][1])+" "+str(pos_group[i][2])
             #随机分配初始姿态
             rot_x = round(random.random()*3.14,2)
@@ -201,7 +207,7 @@ if __name__ == '__main__':
         new_xml_name = "scene_"+str(scene_n)+".xml"
 
         #找到对应的场景文件夹目录，没有的话就创建
-        scene_dir = os.path.join(scenes_dir+str(scene_n))
+        scene_dir = os.path.join(scenes_dir+str(scene_n).zfill(max_digits))
         if not os.path.exists(scene_dir):
             os.makedirs(scene_dir)
 
