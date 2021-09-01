@@ -20,7 +20,7 @@ from meshpy.obj_file import ObjFile
 from meshpy.sdf_file import SdfFile
 import os
 import glob
-
+import time
 import multiprocessing
 import matplotlib.pyplot as plt
 plt.switch_backend('agg')  # for the convenient of run on remote computer
@@ -30,6 +30,24 @@ import argparse
 #解析命令行参数
 parser = argparse.ArgumentParser(description='Sample grasp for meshes')
 parser.add_argument('--gripper', type=str, default='panda')
+#b : breakpoint sample  断点采样
+#r:  re-sample  重采样
+#p: post-process  后续处理
+parser.add_argument('--mode', type=str, choices=['b', 'r', 'p'],default='b')
+'''
+每个模型的抓取期望数量为 target_n = rounds*process_n*grasp_n
+可以根据自己的电脑配置来手动更改这几个参数，参考期望数量为6000以上
+'''
+#设置采集几轮
+parser.add_argument('--rounds', type=int,default=1)
+#设置每轮用多少个线程同时采样一个mesh的抓取
+parser.add_argument('--process_n', type=int,default=10) #60
+#设置每个线程采集的目标抓取数量
+parser.add_argument('--grasp_n', type=int,default=3) #200
+
+
+
+
 args = parser.parse_args()
 
 #sys.path()
@@ -54,9 +72,9 @@ def do_job(job_id,grasps_with_score):      #处理函数  处理index=i的模型
     #对CAD模型进行Antipod采样，grasps_with_score_形式为 [(grasp pose, score),...]
     grasps_with_score_ = grasp_sampler.generate_grasps_score(
         dex_net_graspable, 
-        target_num_grasps=10,  #每轮采样的目标抓取数量
+        target_num_grasps=args.grasp_n,  #每轮采样的目标抓取数量
         grasp_gen_mult=10,                                         
-        max_iter=5,                 #为了达到目标数量，最多进行的迭代次数
+        max_iter=10,                 #为了达到目标数量，最多进行的迭代次数
         vis=False,
         random_approach_angle=True)
 
@@ -143,24 +161,6 @@ if __name__ == '__main__':
         os.makedirs(grasps_file_dir)
 
 
-    #尝试获取外部文件列表
-    all_objects_original_grasps = []
-    objects_name_list =[]
-    original_grasp_files = glob.glob(grasps_file_dir+'original_*')
-    #如果外部有指定文件,就从外部读取之前生成好的抓取
-    if len(original_grasp_files)!=0:
-        print("There is {} original grasp files".format(len(original_grasp_files)))
-        print(original_grasp_files)
-
-        for file in original_grasp_files:
-            objects_name_list.append(file.split('original_')[-1].split('.')[0])
-            with open(file, 'rb') as f:
-                all_objects_original_grasps.append(pickle.load(f))
-    else:
-        print("There is no original grasp files!")
-
-
-
     #读取采样器初始化配置文件
     yaml_config = YamlConfig(home_dir + "/code/dex-net/test/config.yaml")
     #加载夹爪配置参数，初始化夹爪对象
@@ -170,65 +170,82 @@ if __name__ == '__main__':
 
     #
     mangaer = multiprocessing.Manager()
-    #如果从外部没有读取到数据
-    if len(original_grasp_files)==0:
+    #如果是b和r模式
+    if args.mode!='p':
         #对cad模型按顺序一个一个检测抓取
         for obj_index, object_path in enumerate(file_list_all):
-                
+
+            #看一下文件夹中有没有之前生成好的
+    
             grasps_with_score =mangaer.list()
 
             #截取目标对象名称
-            object_name = object_path.split('/')[-1]  
+            object_name = object_path.split('/')[-1] 
+            print("{}开始采样".format(object_name))
+            time.sleep(1)
+            #预备生成的文件名称 
+            original_grasp_file_name =  grasps_file_dir+"original_{}.pickle".format(object_name)
+            if os.path.exists(original_grasp_file_name) and args.mode=='b':
+                print("{}已存在".format(original_grasp_file_name))
+                #time.sleep(1)
+                continue
+
             #加载cad模型
             dex_net_graspable =  get_dex_net_graspable(object_path)
 
             #获得计算机的核心数
             cores = multiprocessing.cpu_count()
             #在这里修改同时使用多少个进程执行采样，最好不超过计算机的核心数
-            processes_num = 10
+            processes_num = args.process_n
+            if processes_num>=cores:
+                print('\'process_n\'  too large!  Set  \'process_n\' less than {}'.format(cores))
+                raise NameError()
+            #设置外部轮数
+            for _ in range(args.rounds):
+                pool =[]
+                for i in range(processes_num):
+                    pool.append(multiprocessing.Process(target=do_job, args=(i,grasps_with_score)))
+                #启动多线程
+                [p.start() for p in pool]                  
+                #等待所有进程结束，返回主进程
+                [p.join() for p in pool]                  
+                #pool.join()
 
-            pool =[]
-            for i in range(processes_num):
-                pool.append(multiprocessing.Process(target=do_job, args=(i,grasps_with_score)))
-            #启动多线程
-            [p.start() for p in pool]                  
-            #等待所有进程结束，返回主进程
-            [p.join() for p in pool]                  
-            #pool.join()
-
-            print("===========共获得{}个grasp=============".format(len(grasps_with_score)))
+            print("==========={}共获得{}个grasp=============".format(object_name,len(grasps_with_score)))
             #转化成为普通list
             grasps_with_score  = [x for x in grasps_with_score]
 
             #按照分数从高到低对采样得到的抓取进行排序
             original_grasps = grasp_sort(grasps_with_score)
 
-            #先保存下来这些原始的采样数据，采样一次挺不容易的
-            original_grasp_file_name =  grasps_file_dir+"original_{}.pickle".format(object_name)
+            #保存下来这些原始的采样数据，采样一次挺不容易的
             with open(original_grasp_file_name, 'wb') as f:
                 pickle.dump(original_grasps, f)
 
 
-            #按照分数区间，剔除冗余抓取
-            final_grasps = redundant_check(grasps_with_score,20)
-            #==========保存最终结果=========
-            #保存grasp的完整配置和分数
-            final_grasp_file_name =  grasps_file_dir+object_name
-            with open(final_grasp_file_name+ '.pickle', 'wb') as f:
-                pickle.dump(final_grasps, f)
-            #只保存姿态和分数
-            tmp = []
-            for grasp in final_grasps:
-                grasp_config = grasp[0].configuration
-                score = np.array([grasp[1]])
-                tmp.append(np.concatenate([grasp_config, score]))
-            np.save(final_grasp_file_name + '.npy', np.array(tmp))
-            print("finished job ", object_name)
+    else:#处理模式
+        #尝试获取外部文件列表
+        all_objects_original_grasps = []
+        objects_name_list =[]
+        original_grasp_files = glob.glob(grasps_file_dir+'original_*')
+        #如果外部有指定文件,就从外部读取之前生成好的抓取
+        if len(original_grasp_files)!=0:
+            print("There is {} original grasp files".format(len(original_grasp_files)))
+            print(original_grasp_files)
 
-    else:#如果从外部读取到了数据
+            for file in original_grasp_files:
+                objects_name_list.append(file.split('original_')[-1].split('.')[0])
+                with open(file, 'rb') as f:
+                    all_objects_original_grasps.append(pickle.load(f))
+        else:
+            print("There is no original grasp files!")
+        #对每个物体进行后续处理
         for index,grasps_with_score in enumerate(all_objects_original_grasps):
+
             #按照分数区间，剔除冗余抓取
-            final_grasps = redundant_check(grasps_with_score,20)
+            #final_grasps = redundant_check(grasps_with_score,20)
+            #debug  直接相等，不进行后续处理
+            final_grasps =grasps_with_score
 
             #==========保存最终结果=========
             #保存grasp的完整配置和分数

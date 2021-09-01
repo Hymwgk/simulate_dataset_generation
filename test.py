@@ -6,6 +6,18 @@ a =200
 max_digits = 5
 print(str(a).zfill(5))
 
+a = np.arange(90).reshape(-1,3,3)
+b = np.arange(90).reshape(-1,3,3)
+print(a[0])
+print(b[0])
+print(a[0].dot(b[0]))
+
+c =np.matmul(a,b)
+d =np.c_[c,np.array([0,0,1]).reshape(-1,3,1).repeat(c.shape[0],axis=0)]
+e = np.array([0,0,0,1]).reshape(1,1,4).repeat(c.shape[0],axis=0)
+d=np.concatenate((d,e),axis = 1)
+print(c[0])
+
 
 def do_job(job_id):      #处理函数  处理index=i的模型
     grasps_with_score_ = range(5)

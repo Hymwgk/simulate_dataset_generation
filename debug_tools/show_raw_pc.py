@@ -65,7 +65,7 @@ def readkey(getchar_fn=None):
   return chr(0x10 + ord(c3) - 65)
 
 
-def show_points(point, name='raw_pc',color='lb', scale_factor=.005):
+def show_points(point, name='raw_pc',color='lb', scale_factor=.004):
     mlab.figure(figure=name,bgcolor=(1, 1, 1), fgcolor=(0.25, 0.88, 0.81),size=(1800,1800))
     if color == 'b':
         color_f = (0, 0, 1)
@@ -82,6 +82,32 @@ def show_points(point, name='raw_pc',color='lb', scale_factor=.005):
         mlab.points3d(point[0], point[1], point[2], color=color_f, scale_factor=scale_factor)
     else:  # vis for multiple points
         mlab.points3d(point[:, 0], point[:, 1], point[:, 2], color=color_f, scale_factor=scale_factor)
+
+def show_axis(scale_factor=.004):
+        # un1 = grasp_bottom_center + 0.5 * grasp_axis * self.gripper.max_width
+        un2 = [0,0,0]
+        # un3 = grasp_bottom_center + 0.5 * minor_pc * self.gripper.max_width
+        # un4 = grasp_bottom_center
+        # un5 = grasp_bottom_center + 0.5 * grasp_normal * self.gripper.max_width
+        # un6 = grasp_bottom_center
+        #把当前选择的点画成一个球
+        #show_points(np.array([0,0,0]), color='g', scale_factor=scale_factor * 4)
+        # self.show_points(un1, scale_factor=scale_factor * 4)
+        # self.show_points(un3, scale_factor=scale_factor * 4)
+        # self.show_points(un5, scale_factor=scale_factor * 4)
+        # self.show_line(un1, un2, color='g', scale_factor=scale_factor)  # binormal/ major pc
+        # self.show_line(un3, un4, color='b', scale_factor=scale_factor)  # minor pc
+        # self.show_line(un5, un6, color='r', scale_factor=scale_factor)  # approach normal
+        #画箭头，起始点坐标xyz为un2[0], un2[1], un2[2]
+        #终止点坐标xyz 为grasp_axis[0], grasp_axis[1], grasp_axis[2]
+        mlab.quiver3d(un2[0], un2[1], un2[2], 0,1,0,
+                      scale_factor=0.5, line_width=1, color=(0, 1, 0), mode='arrow')
+        mlab.quiver3d(un2[0], un2[1], un2[2], 0,0,1,
+                      scale_factor=0.5, line_width=1, color=(0, 0, 1), mode='arrow')
+        mlab.quiver3d(un2[0], un2[1], un2[2], 1,0,0,
+                      scale_factor=0.5, line_width=1, color=(1, 0, 0), mode='arrow')
+
+
 
 #按键检测子线程
 def do_job():
@@ -137,6 +163,7 @@ if __name__ == '__main__':
             pc = pc_raw[~np.isnan(pc_raw).any(axis=1)]
 
             show_points(pc,name='scene index '+pc_path.split('/')[-2])
+            show_axis()
             print("Show:",pc_path)
             print("关闭点云窗口播放下一张")
 

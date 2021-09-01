@@ -14,6 +14,8 @@ import glob
 import pickle
 import time
 import multiprocessing
+#from autolab_core import RigidTransform   导入不了
+
 
 import argparse
 #解析命令行参数
@@ -26,7 +28,7 @@ args = parser.parse_args()
 
 def do_job(scene_index):
     #print("==================do job", scene_index)
-
+    global table_obj_poses_path
     for path in  table_obj_poses_path:
         if scene_index==int(path.split('/')[-2]):
             meshes_with_pose_path = path
@@ -79,11 +81,24 @@ def do_job(scene_index):
     #设置为kinect相机
     scanner.scan_type = "kinect"
     #设置相机的位置姿态
-    scaner_quaternion = mathutils.Quaternion([0.978974,0.198347,-0.026844,-0.039333])
+    location = [0.0,-0.465,1.691]
+    quaternion = [0.978974,0.198347,-0.026844,-0.039333]
+    np.save(os.path.join(os.path.split(meshes_with_pose_path)[0],'world_to_scaner.npy'),np.array(location+quaternion))
+    
+    scanner.location = location
+    scaner_quaternion = mathutils.Quaternion(quaternion)
     scaner_euler = scaner_quaternion.to_euler('XYZ')
     scanner.rotation_euler = scaner_euler
 
-    scanner.location = (0.0,-0.465,1.691)
+
+    '''
+    #使用blender导入不了
+    world_to_scaner_rot=RigidTransform.rotation_from_quaternion([0.978974,0.198347,-0.026844,-0.039333])
+    world_to_scaner_trans = np.array(scanner.location)
+    world_to_scaner = RigidTransform(world_to_scaner_rot,world_to_scaner_trans,from_frame='world',to_frame='scaner')
+    world_to_scaner.save(os.path.join(os.path.split(meshes_with_pose_path)[0],'world_to_scaner.tf'))
+    '''
+
     #设置点云是否添加噪声
     scanner.add_noise_scan_mesh
 

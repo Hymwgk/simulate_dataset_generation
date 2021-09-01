@@ -26,7 +26,7 @@
 │       ├── 1
 │       └── ...
 └── ycb #存放仿真以及抓取采样需要的模型文件
-    ├── all_16k_stls#运行copy_all_stls.py 脚本，将google_16k中的所有stl文件拷贝到该文件夹，将会作为模型库供mujoco仿真
+    ├── all_16k_meshes#运行copy_all_meshes.py 脚本，将google_16k中的所有stl文件拷贝到该文件夹，将会作为模型库供mujoco仿真
     │   ├── 002_master_chef_can.stl#google_16k中的模型文件
     │   ├──...
     │   ├── bg_funnel_part.stl#mujoco世界背景模型文件
@@ -81,7 +81,7 @@
    python  copy_all_meshes.py 
    ```
 
-4. 下载的桌子等背景模型，并拷贝到`all_16k_meshes`文件夹中
+4. 将下载的桌子等背景文件拷贝到`all_16k_meshes`文件夹中
 
    
    
@@ -97,10 +97,27 @@
 
    - `sample_grasps_for_meshes.py`  单次只对一个物体进行并行多进程采样(优先使用该方法)  **（把要修改的参数暴露出来，并解释说明，还未完善）**
 
-     第一次运行将在`~/dataset/simulate_grasp_dataset/panda/antipodal_grasps/`路径下生成`original_<object_name>.pickle`形式的未经过处理的抓取采样文件，并在同一路径下生成`<object_name>.pickle`与`<object_name>.npy`两种形式的最终筛选文件，该筛选文件主要是对分数区间进行划分，剔除了各个区间内部的冗余抓取。以后再次执行的时候，会优先读取文件夹内部的`original_<object_name>.pickle`初始采样文件，并进行冗余剔除处理。
+     `--gripper` 指定夹爪的型号
+
+     `--mode`   指定代码运行模式：
+
+     - `b` 断点采样模式，将会生成`original_<object_name>.pickle`形式的未经过处理的抓取采样文件，会自动跳过已经生成的文件，支持断点运行
+     - `r`  重新采样模式，将会忽略已经生成的文件，重新开始采样生成`original_<object_name>.pickle`
+     - `p` 处理模式，对已经生成好的`original_<object_name>.pickle`文件作进一步的处理，初步筛选出较为优质的抓取
+
+     `--rounds` 设定每个mesh模型采样几轮
+
+     `--process_n` 设定每一轮采样使用多少个进程并行采样
+
+     `--grasp_n` 设定每一个进程的采样目标是多少个抓取 
+
+     以上的几个参数可以根据自己的电脑配置来选择，其中每个mesh模型总的目标采样数量的计算方式是：
+     $$
+     target = rounds*process\_n*grasp\_n
+     $$
 
      ```bash
-     python sample_grasps_for_meshes.py  --gripper  panda#夹爪名称
+     python sample_grasps_for_meshes.py  --gripper  panda --mode b  --rounds 1 --process_n 60  --grasp_n 200
      ```
 
    - `generate-dataset-canny.py`  旧版本的采样方法，同时对多个物体采样，每个物体只分配一个进程
@@ -109,9 +126,15 @@
      python  generate-dataset-canny.py    --gripper panda   #夹爪名称
      ```
 
-     
+7. 以交互界面形式查看已经采样出的抓取姿态
 
-7. 由于夹爪尺寸限制，有些模型采样得到的抓取较少，需要根据模型抓取采样结果的好坏多少，筛选出适合该特定夹爪的模型子集合用于场景仿真，它会在`~/dataset/simulate_grasp_dataset/panda/`文件夹下生成名为`good_meshes.pickle`的文件    **还未完善，需要等到上面的抓取生成后才行**
+   ```bash
+   python  read_grasps_from_file.py  --gripper panda
+   ```
+
+   
+
+8. 由于夹爪尺寸限制，有些模型采样得到的抓取较少，需要根据模型抓取采样结果的好坏多少，筛选出适合该特定夹爪的模型子集合用于场景仿真，它会在`~/dataset/simulate_grasp_dataset/panda/`文件夹下生成名为`good_meshes.pickle`的文件    **还未完善，需要等到上面的抓取生成后才行**
 
    可以考虑：并不一定非要每种物体只有一个，可以把一些物体，重复几次
 
@@ -119,39 +142,33 @@
    python  check_good_meshes_for_gripper.py  --gripper   panda #夹爪名称
    ```
 
-8. 从上一步筛选的合法模型子集中，随机抽取指定数量的模型，为Mujoco生成指定数量的模拟场景xml配置文件
+9. 从上一步筛选的合法模型子集中，随机抽取指定数量的模型，为Mujoco生成指定数量的模拟场景xml配置文件
+
+   `--mesh_num` 每个模拟场景中包含的模型数量
+
+   `--scene_num` 设定一共生成几个虚拟场景
 
    ```bash
    python  generate_mujoco_xml.py  --gripper panda   --mesh_num  10   --scene_num  100   #夹爪名称    每个场景中包含10个物体    生成100个场景
    ```
 
-9. 读取各个场景的xml配置文件，利用Mujoco进行仿真，筛选出停留在桌子上的物体，保留这些合法物体的列表以及相应稳定位姿，将会在每一帧的文件夹中生成两个文件：
+10. 读取各个场景的xml配置文件，利用Mujoco进行仿真，生成两类数据：1)筛选出自由落体稳定后仍然存在于桌面上的物体列表（包括背景桌子）；2)对应模型在空间中的位置姿态列表(平移向量+四元数) ；这两类数据共同以`table_meshes_with_pose.pickle`的形式保存在各自的场景文件夹中，该文件将为后续使用BlenSor进行点云仿真提供 场景模型(.obj格式)的路径和对应姿态。
 
-   - `legal_meshes.pickle`  稳定姿态位于桌面上的模型列表，记为合法模型（因为仿真过程中，物体可能由于某些原因，掉出指定的桌面，比如反弹出去）
-
-   - `legal_poses.npy`       合法模型仿真结束后的姿态
-
-   上面的两个文件是为了后续使用BlenSor进行点云仿真的时候使用的，因此`legal_meshes.pickle` 中的路径包含的是合法物体的`.obj`格式路径，同时也包含桌子的路径，因为后续仿真也需要桌子。
-
-   另外，这一个步骤有一定的概率失败，可能会读取到某个场景的时候失败
-
-   
-
-   更新：已经将上面的两个文件合并在了一起，名为`table_meshes_with_pose.pickle`
-
-   
+   这一个步骤有一定的概率失败，并且最好是多进程共同仿真，**不过还未完善**
 
    ```bash
    python  poses_simulation.py   --gripper  panda   #夹爪名称
    ```
 
-10.  多进程渲染目标场景，这一步骤的夹爪需要在代码中改动，因为有个外部参数 `-P` 很麻烦
+11. 多进程渲染目标场景，这一步骤的夹爪需要在代码中改动，因为有个外部参数 `-P` 很麻烦；**后续可以尝试优化下**
+
+    默认选定同时渲染10个模拟场景的点云
 
     ```bash
     ~/.blensor/./blender  -P   ~/code/simulate_dataset_generation/raw_pc_generate.py    
     ```
 
-11. 查看对应夹爪文件夹下面的 
+12. 查看刚刚渲染出的仿真场景点云   **（尝试包装一下，允许外部引用）**
 
     `--gripper`  指定夹爪名称，默认panda
 
@@ -176,12 +193,7 @@ cd /home/wgk/.mujoco/mujoco200/bin
 
 
 
-![image-20210822213152685](README.assets/image-20210822213152685.png)
+![image-20210830104108635](README.assets/image-20210830104108635.png)
 
 
 
-![image-20210822213301952](README.assets/image-20210822213301952.png)
-
-![image-20210822213339895](README.assets/image-20210822213339895.png)
-
-![image-20210822213507885](README.assets/image-20210822213507885.png)
