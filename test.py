@@ -1,6 +1,17 @@
 import numpy as np
 import sys
 import multiprocessing
+from dexnet.grasping import RobotGripper
+from autolab_core import YamlConfig
+from dexnet.grasping import GpgGraspSampler  
+import argparse
+import os
+from mayavi import mlab
+
+#解析命令行参数
+parser = argparse.ArgumentParser(description='Test')
+parser.add_argument('--gripper', type=str, default='panda')
+args = parser.parse_args()
 
 a =200
 max_digits = 5
@@ -31,8 +42,38 @@ def do_job(job_id):      #处理函数  处理index=i的模型
 
 
 if __name__ == '__main__':
-
+    home_dir = os.environ['HOME']
     manager = multiprocessing.Manager()
+    yaml_config = YamlConfig(home_dir + "/code/dex-net/test/config.yaml")
+    gripper = RobotGripper.load(args.gripper, home_dir + "/code/dex-net/data/grippers")
+    ags = GpgGraspSampler(gripper, yaml_config)
+
+    mlab.figure(bgcolor=(1, 1, 1), fgcolor=(0.7, 0.7, 0.7), size=(1000, 1000))
+    grasp_bottom_center = np.array([0, 0, 0])
+    approach_normal = np.array([1, 0, 0])
+    binormal = np.array([0, 1, 0])
+    minor_pc = np.array([0,0,1])
+    center_point=grasp_bottom_center+ags.gripper.hand_depth * approach_normal
+    ps = ags.get_hand_points(grasp_bottom_center, approach_normal, binormal)
+
+    ags.show_grasp_3d(ps)
+    ags.show_points(ps,scale_factor=0.005)
+    for i,p in enumerate(ps):
+        mlab.text3d(p[0],p[1],p[2],str(i),scale = (0.005),color=(0,0,1))
+    
+
+    #grasp_bottom_center = -ags.gripper.hand_depth * np.array([1,0,0]) + np.array([0,0,0])
+    '''
+    mlab.text3d(0,-0.008,-0.01,'bottom_center',scale = (0.002),color=(0,0,1))
+    mlab.text3d(0.03,0,0,'approach_normal',scale = (0.004),color=(1,0,0))
+    mlab.text3d(0,0.03,0,'binormal',scale = (0.004),color=(0,1,0))
+    mlab.text3d(0,0,0.03,'minor_pc',scale = (0.004),color=(0,0,1))
+    '''
+
+    ags.show_grasp_norm_oneside(center_point,approach_normal,binormal,minor_pc,scale_factor=0.001)
+
+    
+    mlab.show()
 
     grasps_with_score=manager.list()
     pool =[]
