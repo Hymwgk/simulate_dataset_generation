@@ -172,7 +172,8 @@ def get_inner_points(grasp_bottom_center, approach_normal, binormal,
     else:
         has_p = True
         #抽取出夹爪内部点的x轴坐标，并找到最深入的点的x坐标
-        deepist_point =  np.min(points_in_area[:,0])
+        deepist_point_x =  np.min(points_in_area[:,0])
+        insert_dist = ags.gripper.hand_depth-deepist_point_x
 
 
     if vis:
@@ -193,7 +194,7 @@ def get_inner_points(grasp_bottom_center, approach_normal, binormal,
 
     # print("points_in_area", way, len(points_in_area))
     #返回是否有点has_p，以及，内部点的索引list
-    return len(points_in_area_index),deepist_point
+    return len(points_in_area_index),insert_dist
 
 
 
@@ -315,6 +316,7 @@ if __name__ == '__main__':
         collision_free_grasps_pose = grasps_pose[mask==0]
         collision_free_grasps_bottom_center = grasps_bottom_center[mask==0]
 
+        #限制，合法的抓取其bottom_grasp_center与相机坐标系原点的连线一定是不会穿过其他点云点的
 
 
 
@@ -358,7 +360,9 @@ if __name__ == '__main__':
         temp_grasps_pose = temp_grasps_pose[mask]
 
 
-        # 限制夹爪内部点云数量，如果手
+        #限制夹爪内部点云点最小数量，以及限制夹爪内部点云的最小深度
+        #限制点云伸入夹爪内部的高度，忽略掉那些虽然有场景点，但是伸入夹爪内部的点的高度太低的抓取，
+        #这类抓取有可能是抓取的扁平物体，相机噪声干扰较大，另外，这类抓取很可能不稳定
         # 获取
         temp_grasps_bottom_center = temp_grasps_center -ags.gripper.hand_depth * temp_grasps_pose[:,:,0] 
         #对每一个抓取进行内部点数量检测
@@ -370,19 +374,16 @@ if __name__ == '__main__':
             minor_pc = temp_grasps_pose[i,:,2]
             hand_points = ags.get_hand_points(np.array([0, 0, 0]), np.array([1, 0, 0]), np.array([0, 1, 0]))#
             #检查夹爪手内部点的数量，以及每个夹爪内部的“最深点”的伸入距离
-            inner_points_num,deepist_dist = get_inner_points(bottom_center,
+            inner_points_num,insert_dist = get_inner_points(bottom_center,
                                 approach_normal,binormal,minor_pc,pc,hand_points,"p_open",vis=False)
-            #设置夹爪内部点的最少点数
-            if  inner_points_num>30  and deepist_dist>0.025:
+            #设置夹爪内部点的最少点数,以及插入夹爪的最小深度
+            if  inner_points_num>30  and insert_dist>0.025:
                 mask[i]=1
         #保留内部点数足够的采样抓取
         temp_grasps_center = temp_grasps_center[mask==1]
         temp_grasps_pose = temp_grasps_pose[mask==1]
         temp_grasps_bottom_center = temp_grasps_bottom_center[mask==1]
 
-
-        #限制点云伸入夹爪内部的高度，忽略掉那些虽然有场景点，但是伸入夹爪内部的点的高度太低的抓取，
-        #这类抓取有可能是抓取的扁平物体，相机噪声干扰较大，另外，这类抓取很可能不稳定
 
 
         #创建debug显示，仅限于单线程
