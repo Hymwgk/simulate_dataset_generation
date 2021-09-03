@@ -22,12 +22,87 @@ b = np.arange(90).reshape(-1,3,3)
 print(a[0])
 print(b[0])
 print(a[0].dot(b[0]))
+print("============================")
 
 c =np.matmul(a,b)
 d =np.c_[c,np.array([0,0,1]).reshape(-1,3,1).repeat(c.shape[0],axis=0)]
 e = np.array([0,0,0,1]).reshape(1,1,4).repeat(c.shape[0],axis=0)
 d=np.concatenate((d,e),axis = 1)
 print(c[0])
+print("============================")
+
+
+a= np.arange(36).reshape(-1,3,3) #(-1,3,3)
+print(a)
+print("#")
+b = a[:,:,0] #(-1,3)
+b[:,2]=0#(-1,3)
+print(b)
+print("#")
+print(a)     
+print("#")
+#minus_mask = (a[:,:,0][:,2]==0)
+#print(minus_mask)
+
+print("============================")
+"""使用索引和fancy indexing对numpy进行切片索引，是否会返回一个新对象？
+      参考 https://scipy-cookbook.readthedocs.io/items/ViewsVsCopies.html
+"""
+arr = np.arange(10)
+slice = arr[2:5]  #对arr进行切片，并不会返回新对象，而是返回一个reference/view 指向该部分的内容
+slice[:] = 12     #使用该reference直接修改内容，会直接导致原arr对象被修改
+print(arr)
+slice[:]= slice[:]/2    #使用符号运算
+print(slice)
+print(arr)
+slice = slice / 2
+print(slice)
+print(arr)
+print("#")
+
+
+
+index_b =[1,2,3] 
+#在等号右侧使用fancy indexing，
+slice_b = arr[index_b]  #返回的不是一个view，而是copy对应部分数据的新对象
+print(slice_b)
+slice_b[0]=100
+print(slice_b)
+print(arr)
+print('#')
+#在等号左侧直接使用fancy indexing, 并不会创建view也不会创建copy，就相当于直接操作
+#因为没有必要做这些
+arr[index_b] = 100
+print(arr)
+print('#')
+#
+arr[index_b][1] = 100
+print(arr)
+print('#')
+
+#在右侧的简单索引
+arr = np.arange(9).reshape(3,3)
+slice_c = arr[0]  #退化(-1,)   返回view
+slice_c[0]=50
+print(arr)
+print('#')
+
+arr = np.arange(9)
+slice_c = arr[0]  #退化(-1,)   返回的还是一个view，但是因为此时 arr[0]退化为一个np.int64的数字
+#slice_c[0]=50  #是无法使用这种访问的形式来直接修改arr的值的
+slice_c=50  #这样子实际上是把slice_c  分配到了一个新的python  int 类型对象上，并不会修改arr值
+print(arr)
+"""总结：
+1.在右侧的简单索引或者切片返回的是view
+2.在右侧的fancy indexing 返回的是copy
+3.在左侧的简单索引切片或者fancy indexing，都相当于直接操作原数组，不创建view或者copy
+"""
+
+
+
+print("============================")
+
+
 
 
 def do_job(job_id):      #处理函数  处理index=i的模型

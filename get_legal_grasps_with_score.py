@@ -37,21 +37,25 @@ def get_files_path(file_dir_,filename = None):
 
 def get_rot_mat(poses_vector):
     center_point = poses_vector[:,0:3]    #夹爪中心(指尖中心) 
-    major_pc = poses_vector[:,3:6]  # binormal
-    angle = poses_vector[:,[7]]#
+    major_pc = poses_vector[:,3:6]  # (-1,3)
+    if poses_vector.shape[1]>7:
+        angle = poses_vector[:,[7]]# (-1,1)
+    else:
+        angle = poses_vector[:,[6]]  #
+
 
     # cal approach
-    cos_t = np.cos(angle)
+    cos_t = np.cos(angle)   #(-1,1)
     sin_t = np.sin(angle)
-    zeros= np.zeros(cos_t.shape)
+    zeros= np.zeros(cos_t.shape)  #(-1,1)
     ones = np.ones(cos_t.shape)
 
-    #绕世界y轴的旋转矩阵
-    R1 = np.c_[cos_t, zeros, sin_t,zeros, ones, zeros,-sin_t, zeros, cos_t].reshape(-1,3,3).swapaxes(1,2)
+    #绕抓取binormal轴的旋转矩阵
+    R1 = np.c_[cos_t, zeros, sin_t,zeros, ones, zeros,-sin_t, zeros, cos_t].reshape(-1,3,3) #(-1,3,3)
     #print(R1)
-    axis_y = major_pc
+    axis_y = major_pc #(-1,3)
 
-    #设定一个与y轴垂直且与世界坐标系x-o-y平面平行的单位向量作为初始x轴
+    #设定一个与抓取y轴垂直且与C:x-o-y平面平行的单位向量作为初始x轴
     axis_x = np.c_[axis_y[:,[1]], -axis_y[:,[0]], zeros]
     #查找模为0的行，替换为[1,0,0]
     axis_x[np.linalg.norm(axis_x,axis=1)==0]=np.array([1,0,0])
@@ -62,7 +66,7 @@ def get_rot_mat(poses_vector):
     axis_z = np.cross(axis_x, axis_y)
 
     #这个R2就是一个临时的夹爪坐标系，但是它的姿态还不代表真正的夹爪姿态
-    R2 = np.c_[axis_x, np.c_[axis_y, axis_z]].reshape(-1,3,3).swapaxes(1,2)
+    R2 = np.c_[axis_x, np.c_[axis_y, axis_z]].reshape(-1,3,3)
     #将现有的坐标系利用angle进行旋转，就得到了真正的夹爪坐标系，
     # 抽出x轴作为approach轴(原生dex-net夹爪坐标系)
     #由于是相对于运动坐标系的旋转，因此需要右乘
@@ -169,6 +173,7 @@ def get_inner_points(grasp_bottom_center, approach_normal, binormal,
     if len(points_in_area_index) == 0:
         #不存在点
         has_p = False
+        insert_dist=0
     else:
         has_p = True
         #抽取出夹爪内部点的x轴坐标，并找到最深入的点的x坐标
@@ -196,6 +201,128 @@ def get_inner_points(grasp_bottom_center, approach_normal, binormal,
     #返回是否有点has_p，以及，内部点的索引list
     return len(points_in_area_index),insert_dist
 
+def collision_check_pc(centers,poses,pc):
+    """对CTG抓取姿态和Cpc进行碰撞检测
+    """
+    #对旋转后的抓取，逐个进行碰撞检测，并把没有碰撞的抓取保存下来
+    bottom_centers = centers -ags.gripper.hand_depth * poses[:,:,0] 
+    mask =np.zeros(centers.shape[0])
+    #对每个抓取进行碰撞检测
+    for i,bottom_center in enumerate(bottom_centers):
+        approach_normal = poses[i,:,0] #approach轴
+        binormal = poses[i,:,1]#
+        minor_pc = poses[i,:,2]
+        hand_points = ags.get_hand_points(np.array([0, 0, 0]), np.array([1, 0, 0]), np.array([0, 1, 0]))#
+        #检查与点云的碰撞情况
+        collision = ags.check_collide(bottom_center,approach_normal,
+                                binormal,minor_pc,pc,hand_points,vis=False)
+        if  collision:
+            mask[i]=1
+    good_grasps_center = centers[mask==0]
+    good_free_grasps_pose = poses[mask==0]
+    bad_grasps_center = centers[mask==1]
+    bad_free_grasps_pose = poses[mask==1]
+    return good_grasps_center,good_free_grasps_pose,bad_grasps_center,bad_free_grasps_pose
+
+def collision_check_table(centers,poses,table_hight = 0.75,safe_dis = 0.01):
+    """对夹爪进行批量的碰桌子检测，夹爪上面的最低点不允许低于桌子高度
+    """
+    #先批量取出虚拟夹爪各点相对于相机坐标系C的坐标
+    grasps_hand_points = np.empty([0,21,3])
+    for i in range(poses.shape[0]):
+        hand_points = ags.get_hand_points(centers[i],
+                                                        poses[i,:,0], poses[i,:,1]).reshape(1,-1,3)#
+        grasps_hand_points = np.concatenate((grasps_hand_points,hand_points),axis=0)
+
+    #求出虚拟夹爪各个点相对于世界坐标系W的坐标
+    w_gp = np.swapaxes(np.matmul(world_to_scaner_rot,np.swapaxes(grasps_hand_points,1,2)),1,2)+\
+                                                world_to_scaner_trans.reshape(1,3) #(-1,21,3)
+    w_pc=np.matmul(world_to_scaner_rot,pc.T).T+\
+                                                world_to_scaner_trans.reshape(1,3) #(-1,3)
+    #判断夹爪各点是否低于桌面高度，设置容忍值
+    lowest_points = np.min(w_gp[:,1:,2],axis = 1,keepdims = True)#np.where()
+    #最低点高于桌面的抓取为True
+    mask = lowest_points>table_hight+safe_dis
+    mask = mask.flatten()#(-1,)
+    temp_grasps_center = centers[mask] #(-1,3)
+    temp_grasps_pose = poses[mask]  #(-1,3,3)
+
+    bad_centers = centers[~mask] #(-1,3)
+    bad_poses = poses[~mask]  #(-1,3,3)
+    return temp_grasps_center,temp_grasps_pose,bad_centers,bad_poses
+
+def restrict_approach_angle(centers,poses,max_angle=50):
+    """仅仅保留抓取approach轴(世界坐标系W)与世界坐标系-z轴夹角 小于max_angle(度)的抓取
+            防止抓取失败率过高
+    """
+    #抽取出各个抓取approach轴在世界坐标系W下的单位向量
+    grasps_approach = poses[:,:,0] #(-1,3)
+    #单位化
+    grasps_approach = grasps_approach/np.linalg.norm(grasps_approach,axis=1,keepdims=True) #(-1,3)
+
+    cos_angles = grasps_approach.dot(np.array([0,0,-1]).T)  #(-1,)
+    #限制抓取approach轴与世界-z轴的角度范围
+    mask = cos_angles>np.cos(max_angle/180*pi)
+    #print(cos_angles[mask],np.cos(45/180*pi))
+    temp_grasps_center = centers[mask]
+    temp_grasps_pose = poses[mask]
+
+    bad_centers = centers[~mask]
+    bad_poses = poses[~mask]
+    return temp_grasps_center,temp_grasps_pose,bad_centers,bad_poses
+
+def restrict_pc_num_deepth(centers,poses,minimum_points=30,minimum_deepth=0.01):
+    """限制夹爪内部点云点最小数量，以及限制夹爪内部点云的最小深度
+    限制点云伸入夹爪内部的高度，忽略掉那些虽然有场景点，但是伸入夹爪内部的点的高度太低的抓取，
+    这类抓取有可能是抓取的扁平物体，相机噪声干扰较大，另外，这类抓取很可能不稳定
+    """
+    # 获取
+    bottom_centers = centers -ags.gripper.hand_depth * poses[:,:,0] 
+    #对每一个抓取进行内部点数量检测
+    mask =np.zeros(centers.shape[0])
+    #对每个抓取进行碰撞检测
+    for i,bottom_center in enumerate(bottom_centers):
+        approach_normal = poses[i,:,0] #approach轴
+        binormal = poses[i,:,1]#
+        minor_pc = poses[i,:,2]
+        hand_points = ags.get_hand_points(np.array([0, 0, 0]), np.array([1, 0, 0]), np.array([0, 1, 0]))#
+        #检查夹爪手内部点的数量，以及每个夹爪内部的“最深点”的伸入距离
+        inner_points_num,insert_dist = get_inner_points(bottom_center,
+                            approach_normal,binormal,minor_pc,pc,hand_points,"p_open",vis=False)
+        #设置夹爪内部点的最少点数,以及插入夹爪的最小深度
+        if  inner_points_num>30  and insert_dist>0.01:
+            mask[i]=1
+    #保留内部点数足够的采样抓取
+    temp_grasps_center = centers[mask==1]
+    temp_grasps_pose = poses[mask==1]
+
+    bad_centers = centers[mask==0]
+    bad_poses = poses[mask==0]
+    return temp_grasps_center,temp_grasps_pose,bad_centers,bad_poses
+
+def show_grasps_pc(pc,good_centers,good_poses,bad_centers=None,bad_poses=None,title=None):
+    """显示点云和抓取，仅限于单进程debug
+    """
+    mlab.figure(figure=title,bgcolor=(1, 1, 1), fgcolor=(0.7, 0.7, 0.7), size=(1000, 1000))
+    _ = show_points(pc)
+    for index,center in enumerate(good_centers):
+        display_grasps(center,good_poses[index],color="d")
+        grasp_bottom_center = -ags.gripper.hand_depth * good_poses[index][:,0] + center
+        #显示抓取的编号
+        mlab.text3d(grasp_bottom_center[0],grasp_bottom_center[1],grasp_bottom_center[2],
+                                    str(index),scale = (0.01),color=(1,0,0))
+
+    if bad_centers is None or bad_poses is None:
+        pass
+    else:
+        for index,center in enumerate(bad_centers):
+            display_grasps(center,bad_poses[index],color=(1,0,0))
+            grasp_bottom_center = -ags.gripper.hand_depth * bad_poses[index][:,0] + center
+            #显示抓取的编号
+            mlab.text3d(grasp_bottom_center[0],grasp_bottom_center[1],grasp_bottom_center[2],
+                                        str(index),scale = (0.01),color=(1,0,0))
+    mlab.show()
+    
 
 
 
@@ -245,9 +372,6 @@ if __name__ == '__main__':
         grasps_center = np.empty(shape=(0,3))
         grasps_pose    =np.empty(shape=(0,3,3))
 
-        collision_free_grasps_center = np.empty(shape=(0,3))
-        collision_free_grasps_pose    =np.empty(shape=(0,3,3))
-
         #对场景中每一个模型
         for mesh_index,mesh in enumerate(table_mesh_list):
             #WTM
@@ -276,134 +400,75 @@ if __name__ == '__main__':
             scaner_to_grasps_rot = scaner_to_grasps_T[:,0:3,0:3]
             scaner_to_grasps_trans = scaner_to_grasps_T[:,0:3,3].reshape(-1,3)
 
-            '''
-            scaner_to_grasp_T=scaner_to_grasps_T[0]
-            scaner_to_grasp_rot = scaner_to_grasp_T[0:3,0:3]
-            scaner_to_grasp_trans = scaner_to_grasp_T[0:3,3].reshape(-1,3)
-
-            Gp = np.array([1,2,3]) #随便设置一个点Gp
-            #分解为R t 两个变换步骤
-            Cp_r_t=scaner_to_grasp_rot.dot(Gp) + scaner_to_grasp_trans#先旋转再平移
-            Cp_t_r=scaner_to_grasp_rot.dot(Gp+ scaner_to_grasp_trans)#先平移再旋转
-            #直接使用4x4变换矩阵计算
-            Gp_q = np.array([1,2,3,1])#将Gp拓展为齐次向量
-            Cp_q = scaner_to_grasp_T.dot(Gp_q)
-
-            print(Cp_r_t)
-            print(Cp_t_r)
-            print(Cp_q[0:3])
-            '''
             #将所有的模型的grasp  统一添加到场景的grasp 列表中
-            grasps_center = np.r_[grasps_center,scaner_to_grasps_trans]
-            grasps_pose = np.r_[grasps_pose,scaner_to_grasps_rot]
+            #grasps_center = np.r_[grasps_center,scaner_to_grasps_trans]
+            grasps_center = np.concatenate((grasps_center,scaner_to_grasps_trans),axis=0)
+            #grasps_pose = np.r_[grasps_pose,scaner_to_grasps_rot]
+            grasps_pose=np.concatenate((grasps_pose,scaner_to_grasps_rot),axis=0)
 
+        #显示点云与抓取，仅限于debug
+        show_grasps_pc(pc,grasps_center,grasps_pose,title='原始抓取')
 
         #对旋转后的抓取，逐个进行碰撞检测，并把没有碰撞的抓取保存下来
-        grasps_bottom_center = grasps_center -ags.gripper.hand_depth * grasps_pose[:,:,0] 
-        mask =np.zeros(grasps_center.shape[0])
-        #对每个抓取进行碰撞检测
-        for i,grasp_bottom_center in enumerate(grasps_bottom_center):
-            approach_normal = grasps_pose[i,:,0] #approach轴
-            binormal = grasps_pose[i,:,1]#
-            minor_pc = grasps_pose[i,:,2]
-            hand_points = ags.get_hand_points(np.array([0, 0, 0]), np.array([1, 0, 0]), np.array([0, 1, 0]))#
-            #检查与点云的碰撞情况
-            collision = ags.check_collide(grasp_bottom_center,approach_normal,
-                                    binormal,minor_pc,pc,hand_points,vis=False)
-            if  collision:
-                mask[i]=1
-        collision_free_grasps_center = grasps_center[mask==0]
-        collision_free_grasps_pose = grasps_pose[mask==0]
-        collision_free_grasps_bottom_center = grasps_bottom_center[mask==0]
+        temp_good_grasps_center,temp_good_grasps_pose,bad_centers,bad_poses\
+            =collision_check_pc(grasps_center,grasps_pose,pc)
 
-        #限制，合法的抓取其bottom_grasp_center与相机坐标系原点的连线一定是不会穿过其他点云点的
+        #显示点云与抓取，仅限于debug
+        show_grasps_pc(pc,temp_good_grasps_center,temp_good_grasps_pose,
+        bad_centers,bad_poses,title='夹爪点云碰撞检测')
 
+        #保存不与桌子碰撞的抓取
+        temp_good_grasps_center,temp_good_grasps_pose,bad_centers,bad_poses\
+            =collision_check_table(temp_good_grasps_center,temp_good_grasps_pose)
 
+        #显示点云与抓取，仅限于debug
+        show_grasps_pc(pc,temp_good_grasps_center,temp_good_grasps_pose,
+        bad_centers,bad_poses,title='夹爪桌面碰撞检测')
 
+        #限制抓取approach轴与桌面垂直方向的角度
+        temp_good_grasps_center,temp_good_grasps_pose,bad_centers,bad_poses\
+            =restrict_approach_angle(temp_good_grasps_center,temp_good_grasps_pose,max_angle=50)
 
-        #对夹爪进行批量的碰桌子检测，夹爪上面的最低点不允许低于桌子高度
-        #先批量取出虚拟夹爪各点相对于相机坐标系C的坐标
-        grasps_hand_points = np.empty([0,21,3])
-        for i in range(np.sum(mask==0)):
-            hand_points = ags.get_hand_points(collision_free_grasps_bottom_center[i],
-                                                            collision_free_grasps_pose[i,:,0], collision_free_grasps_pose[i,:,1]).reshape(1,-1,3)#
-            grasps_hand_points = np.concatenate((grasps_hand_points,hand_points),axis=0)
-
-        #求出虚拟夹爪各个点相对于世界坐标系W的坐标
-        w_gp = np.swapaxes(np.matmul(world_to_scaner_rot,np.swapaxes(grasps_hand_points,1,2)),1,2)+\
-                                                    world_to_scaner_trans.reshape(1,3) #(-1,21,3)
-        w_pc=np.matmul(world_to_scaner_rot,pc.T).T+\
-                                                    world_to_scaner_trans.reshape(1,3) #(-1,3)
-        #判断夹爪各点是否低于桌面高度，设置容忍值
-        table_hight = 0.75
-        safe_dis = 0.01
-        #mask = np.zeros(w_gp.shape[0])
-        lowest_points = np.min(w_gp[:,1:,2],axis = 1,keepdims = True)#np.where()
-        #最低点高于桌面的抓取为True
-        mask = lowest_points>table_hight+safe_dis
-        mask = mask.flatten()
-        temp_grasps_center = collision_free_grasps_center[mask] #(-1,3)
-        temp_grasps_pose = collision_free_grasps_pose[mask]  #(-1,3,3)
-        #
-        
-        #仅仅保留抓取approach轴(世界坐标系W)与世界坐标系-z轴夹角 小于90度的抓取，防止抓取失败率过高
-        #抽取出各个抓取approach轴在世界坐标系W下的单位向量
-        grasps_approach = temp_grasps_pose[:,:,0] #(-1,3)
-        #单位化
-        grasps_approach = grasps_approach/np.linalg.norm(grasps_approach,axis=1,keepdims=True) #(-1,3)
-
-        cos_angles = grasps_approach.dot(np.array([0,0,-1]).T)  #(-1,)
-        #限制抓取approach轴与世界-z轴的角度范围
-        mask = cos_angles>np.cos(50/180*pi)
-        #print(cos_angles[mask],np.cos(45/180*pi))
-        temp_grasps_center = temp_grasps_center[mask]
-        temp_grasps_pose = temp_grasps_pose[mask]
-
+        #显示点云与抓取，仅限于debug
+        show_grasps_pc(pc,temp_good_grasps_center,temp_good_grasps_pose,
+        bad_centers,bad_poses,title='限制抓取角度')
 
         #限制夹爪内部点云点最小数量，以及限制夹爪内部点云的最小深度
-        #限制点云伸入夹爪内部的高度，忽略掉那些虽然有场景点，但是伸入夹爪内部的点的高度太低的抓取，
-        #这类抓取有可能是抓取的扁平物体，相机噪声干扰较大，另外，这类抓取很可能不稳定
-        # 获取
-        temp_grasps_bottom_center = temp_grasps_center -ags.gripper.hand_depth * temp_grasps_pose[:,:,0] 
-        #对每一个抓取进行内部点数量检测
-        mask =np.zeros(temp_grasps_center.shape[0])
-        #对每个抓取进行碰撞检测
-        for i,bottom_center in enumerate(temp_grasps_bottom_center):
-            approach_normal = temp_grasps_pose[i,:,0] #approach轴
-            binormal = temp_grasps_pose[i,:,1]#
-            minor_pc = temp_grasps_pose[i,:,2]
-            hand_points = ags.get_hand_points(np.array([0, 0, 0]), np.array([1, 0, 0]), np.array([0, 1, 0]))#
-            #检查夹爪手内部点的数量，以及每个夹爪内部的“最深点”的伸入距离
-            inner_points_num,insert_dist = get_inner_points(bottom_center,
-                                approach_normal,binormal,minor_pc,pc,hand_points,"p_open",vis=False)
-            #设置夹爪内部点的最少点数,以及插入夹爪的最小深度
-            if  inner_points_num>30  and insert_dist>0.025:
-                mask[i]=1
-        #保留内部点数足够的采样抓取
-        temp_grasps_center = temp_grasps_center[mask==1]
-        temp_grasps_pose = temp_grasps_pose[mask==1]
-        temp_grasps_bottom_center = temp_grasps_bottom_center[mask==1]
+        temp_good_grasps_center,temp_good_grasps_pose,bad_centers,bad_poses\
+            =restrict_pc_num_deepth(temp_good_grasps_center,temp_good_grasps_pose,30,0.01)
+
+        #显示点云与抓取，仅限于debug
+        show_grasps_pc(pc,temp_good_grasps_center,temp_good_grasps_pose,
+        bad_centers,bad_poses,title='限制夹爪内部点数与深度')
 
 
+        #将抓取转变回7d向量保存（相对于相机坐标系）
+        binormals=temp_good_grasps_pose[:,:,1] #抽出抓取的binormal轴 退化为(-1,3)
+        approachs=temp_good_grasps_pose[:,:,0] #抽出approach轴 (-1,3)
+        #计算angles，找到与binormals垂直且平行于C:x-o-y平面的向量
+        temp =np.concatenate((binormals[:,[1]],-binormals[:,[0]]),axis =1)  #(-1,2)
+        project = np.zeros((temp.shape[0],temp.shape[1]+1))
+        project[:,:-1]=temp  #(-1,3)
+        #计算投影approach与binormal之间的角度
+        cos_angles = np.sum(approachs*project,axis=1)#退化(-1,)
+        #检测负号
+        minus_mask =approachs[:,2]>0
+        #求出angles
+        angles = np.arccos(cos_angles)
+        angles[minus_mask] = -angles[minus_mask] 
 
-        #创建debug显示，仅限于单线程
-        mlab.figure(bgcolor=(1, 1, 1), fgcolor=(0.7, 0.7, 0.7), size=(1000, 1000))
-        _ = show_points(pc)
-        for index,center in enumerate(temp_grasps_center):
-            display_grasps(center,temp_grasps_pose[index],color="d")
-            grasp_bottom_center = -ags.gripper.hand_depth * temp_grasps_pose[index][:,0] + center
-            mlab.text3d(grasp_bottom_center[0],grasp_bottom_center[1],grasp_bottom_center[2],
-                                        str(index),scale = (0.01),color=(1,0,0))
+        #拼接
+        legal_grasps_vector = np.concatenate((np.concatenate((temp_good_grasps_center,binormals),axis=1),
+                                                        angles.reshape(-1,1)),axis=1) #(-1,7)
 
-        mlab.show()
+        print(legal_grasps_vector)
 
+        #将拼接好的7d抓取向量，再次转化为旋转和平移两部分，显示出来
+        temp_good_grasps_center = legal_grasps_vector[:,0:3]
+        temp_good_grasps_pose = get_rot_mat(legal_grasps_vector)
 
-
-
-
-        #获得当前帧旋转后的grasp pose 的np.array之后，进行碰撞检测
-
-        #进行劣质剔除
+        #显示点云与抓取，仅限于debug
+        show_grasps_pc(pc,temp_good_grasps_center,temp_good_grasps_pose,title='重显')
 
         #保存为'legal_grasp_with_score.npy'
 

@@ -113,7 +113,7 @@ def display_grasps(grasp, graspable, color):
     # cal approach
     cos_t = np.cos(angle)
     sin_t = np.sin(angle)
-    #绕世界y轴的旋转矩阵
+    #绕抓取y轴的旋转矩阵
     R1 = np.c_[[cos_t, 0, sin_t],[0, 1, 0],[-sin_t, 0, cos_t]]
     #print(R1)
 
