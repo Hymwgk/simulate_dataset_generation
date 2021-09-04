@@ -178,6 +178,28 @@
     python  show_raw_pc.py  --gripper  panda  --show  5   #单独查看第5帧点云
     ```
 
+13. 多线程对场景中的候选抓取进行合法性检查
+
+    主要检测虚拟夹爪是否与点云碰撞、虚拟夹爪是否与桌面碰撞或者低于桌面、限制抓取approach轴与桌面垂直桌面的角度、设定夹爪内部点云最小数量以及场景点云嵌入夹爪的最小深度，参数为：
+
+    `--gripper`  设定夹爪名称
+
+    `--process_num`  设定同时多少个场景进行合法性检查
+
+    生成的合法抓取姿态以8维度向量（符合dex-net标准的7d位姿+1d 分数）的形式，保存在对应场景文件夹中，文件名统一为`legal_grasps_with_score.npy`
+
+    ```python
+    python get_legal_grasps_with_score   --gripper  panda  --process_num  30
+    ```
+
+    同时也有一个仅用于debug的单进程脚本
+
+    `--load_npy` 出现该字眼则从外部读取结果，否则显示本次生成的结果
+
+    ```python
+    python  get_legal_grasps_with_score_single_thread   --gripper  panda  --load_npy  
+    ```
+
     
 
 
