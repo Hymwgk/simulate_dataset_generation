@@ -29,7 +29,7 @@ import argparse
 
 #解析命令行参数
 parser = argparse.ArgumentParser(description='Old grasp sample method')
-parser.add_argument('--gripper', type=str, default='panda')
+parser.add_argument('--gripper', type=str, default='baxter')
 args = parser.parse_args()
 
 

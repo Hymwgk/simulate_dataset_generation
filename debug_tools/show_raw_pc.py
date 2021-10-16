@@ -17,7 +17,7 @@ import time
 
 #解析命令行参数
 parser = argparse.ArgumentParser(description='Show raw point clouds')
-parser.add_argument('--gripper', type=str, default='panda')
+parser.add_argument('--gripper', type=str, default='baxter')
 parser.add_argument('--show', type=int, default=0)
 args = parser.parse_args()
 

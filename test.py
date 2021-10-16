@@ -1,16 +1,15 @@
 import numpy as np
 import sys
 import multiprocessing
-from dexnet.grasping import RobotGripper
 from autolab_core import YamlConfig
-from dexnet.grasping import GpgGraspSampler  
 import argparse
 import os
 from mayavi import mlab
-
+from tqdm import tqdm
+import time
 #解析命令行参数
 parser = argparse.ArgumentParser(description='Test')
-parser.add_argument('--gripper', type=str, default='panda')
+parser.add_argument('--gripper', type=str, default='baxter')
 args = parser.parse_args()
 
 a =200
@@ -102,6 +101,15 @@ print(arr)
 
 print("============================")
 
+a = np.arange(2,7,2)
+print(a)
+b=np.arange(20)
+
+b=list(set(b).difference(set(a)))
+print(b)
+
+print("============================")
+
 
 
 
@@ -115,6 +123,15 @@ def do_job(job_id):      #处理函数  处理index=i的模型
     grasps_with_score+=grasps_with_score_
     print("Now we have {} grasps in total".format(len(grasps_with_score)))
 
+
+def do_job1(job_id):      #测试多线程进度条
+    #trange(i)是tqdm(range(i))的一种简单写法
+    for i in tqdm(range(100), desc='Processing'+str(job_id)):
+        time.sleep(0.5)
+
+
+from dexnet.grasping import RobotGripper
+from dexnet.grasping import GpgGraspSampler  
 
 if __name__ == '__main__':
     home_dir = os.environ['HOME']
@@ -154,13 +171,13 @@ if __name__ == '__main__':
     pool =[]
 
     for i in range(10):
-        pool.append(multiprocessing.Process(target=do_job, args=(i,)))
+        pool.append(multiprocessing.Process(target=do_job1, args=(i,)))
     #启动多线程
     [p.start() for p in pool]                  
     #等待所有进程结束，返回主进程
     [p.join() for p in pool]              
-    grasps_with_score  = [x for x in grasps_with_score]
-    print(len(grasps_with_score))    
+    #grasps_with_score  = [x for x in grasps_with_score]
+    #print(len(grasps_with_score))    
 
-    print(type(grasps_with_score))
+    #print(type(grasps_with_score))
 

@@ -21,7 +21,7 @@ import argparse
 #解析命令行参数
 '''
 parser = argparse.ArgumentParser(description='Sample grasp for meshes')
-parser.add_argument('--gripper', type=str, default='panda')
+parser.add_argument('--gripper', type=str, default='baxter')
 args = parser.parse_args()
 '''
 
@@ -142,7 +142,7 @@ if __name__ == '__main__':
 
     #gripper_name = args.gripper
     #这个得在这里改动夹爪名称
-    gripper_name='panda'
+    gripper_name='baxter'
 
     home_dir = os.environ['HOME']
 
@@ -156,7 +156,7 @@ if __name__ == '__main__':
     time.sleep(2)
 
     #设置同时访问几个场景
-    pool_size=10  #
+    pool_size=multiprocessing.cpu_count() #
     if pool_size>len(table_obj_poses_path):
         pool_size = len(table_obj_poses_path)
     scene_index = 0

@@ -24,7 +24,7 @@ import argparse
 
 #解析命令行参数
 parser = argparse.ArgumentParser(description='Show grasp from files')
-parser.add_argument('--gripper', type=str, default='panda')
+parser.add_argument('--gripper', type=str, default='baxter')
 args = parser.parse_args()
 
 
@@ -48,7 +48,7 @@ def open_npy_and_obj(name_to_open_):
     #存放mesh模型的文件夹路径
     file_dir = home_dir + "/dataset/simulate_grasp_dataset/ycb/google_512k/"
     #获取当前模型名称
-    object_name_ = name_to_open_.split("/")[-1].split('.')[0]
+    object_name_ = name_to_open_.split("/")[-1].split('_pgpd')[0]
     print(object_name_)
 
     ply_path_ = file_dir+object_name_+'_google_512k/'+object_name_+ "/google_512k/nontextured.ply"
@@ -169,16 +169,29 @@ def show_selected_grasps_with_color(m, ply_name_, title, obj_):
     title：被抓物体的名称
     obj_：被抓物体的mesh文件
     """
+    print('Got {} grasp totally'.format(len(m)))
     #筛选出优质抓取
-    m_good = m[m[:, -2] <= 0.4]
+    m_good = m[m[:, -2] >= 2]
+    if len(m_good)==0:
+        print('No good grasps! Show next mesh')
+        return 0
     #从优质的抓取中随机抽取出25个（如果都要的话，就太多了，不易于显示）
-    m_good = m_good[np.random.choice(len(m_good), size=25, replace=True)]
+    max_n =150
+    if len(m_good)>max_n:
+        print('Got {} good grasps, show random {} grasps'.format(len(m_good),max_n))
+        m_good = m_good[np.random.choice(len(m_good), size=max_n, replace=True)]
+    else:
+        print('Show {} good grasps'.format(len(m_good)))
 
     #筛选出不合格抓取
-    m_bad = m[m[:, -2] >= 1.8]
+    m_bad = m[m[:, -2] <= 0.55]
     #抽选显示
-    m_bad = m_bad[np.random.choice(len(m_bad), size=25, replace=True)]
-
+    if len(m_bad)>max_n:
+        print('Got {} bad grasps, show random {} grasps'.format(len(m_bad),max_n))
+        m_bad = m_bad[np.random.choice(len(m_bad), size=max_n, replace=True)]
+    else:
+        print('Show {} bad grasps'.format(len(m_bad)))
+        
     collision_grasp_num = 0
     if save_fig or show_fig:
         # fig 1: good grasps
@@ -319,5 +332,5 @@ if __name__ == "__main__":
         grasps_with_score, obj, ply_path, obj_name = open_npy_and_obj(npy_names[i])
         print("load file {}".format(npy_names[i]))
         #显示抓取
-        ind_good_grasp = show_random_grasps(grasps_with_score, ply_path, obj_name, obj)
-
+        ind_good_grasp = show_selected_grasps_with_color(grasps_with_score, ply_path, obj_name, obj)
+    print('All done')

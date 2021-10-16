@@ -20,8 +20,8 @@ from numpy.core.fromnumeric import swapaxes
 
 #解析命令行参数
 parser = argparse.ArgumentParser(description='Get legal grasps with score')
-parser.add_argument('--gripper', type=str, default='panda')   #
-parser.add_argument('--process_num', type=int, default=30)  #设置同时处理几个场景
+parser.add_argument('--gripper', type=str, default='baxter')   #
+parser.add_argument('--process_num', type=int, default=70)  #设置同时处理几个场景
 
 args = parser.parse_args()
 
@@ -42,7 +42,7 @@ def get_files_path(file_dir_,filename = None):
 def get_rot_mat(poses_vector):
     center_point = poses_vector[:,0:3]    #夹爪中心(指尖中心) 
     major_pc = poses_vector[:,3:6]  # (-1,3)
-    if poses_vector.shape[1]==11:
+    if poses_vector.shape[1]>7:
         angle = poses_vector[:,[7]]# (-1,1)
     else:
         angle = poses_vector[:,[6]]  #
@@ -74,7 +74,7 @@ def get_rot_mat(poses_vector):
     #将现有的坐标系利用angle进行旋转，就得到了真正的夹爪坐标系，
     # 抽出x轴作为approach轴(原生dex-net夹爪坐标系)
     #由于是相对于运动坐标系的旋转，因此需要右乘
-    R3=np.matmul(R2,R1)
+    R3=np.matmul(R2,R1)  #(-1,3,3)
     '''
     approach_normal =R3[:, :,0]
     #print(np.linalg.norm(approach_normal,axis=1,keepdims=True))
@@ -229,23 +229,27 @@ def collision_check_pc(centers,poses,scores,pc):
     bad_free_grasps_pose = poses[mask==1]
     return good_grasps_center,good_free_grasps_pose,good_scores,bad_grasps_center,bad_free_grasps_pose
 
-def collision_check_table(centers,poses,scores,wtc_r,wtc_t,pc,table_hight = 0.75,safe_dis = 0.01):
+def collision_check_table(centers,poses,scores,wtc_r,wtc_t,pc,table_hight = 0.75,safe_dis = 0.0):
     """对夹爪进行批量的碰桌子检测，夹爪上面的最低点不允许低于桌子高度
     table_hight：虚拟桌面相对于世界坐标系桌面的高度，
     safe_dis:  夹爪与桌面的安全距离，与桌面太近也不要
     """
     #先批量取出虚拟夹爪各点相对于相机坐标系C的坐标
     grasps_hand_points = np.empty([0,21,3])
+
+    #批量获取bottom_centers 用于碰撞检测
+    bottom_centers = centers -ags.gripper.hand_depth * poses[:,:,0] 
     for i in range(poses.shape[0]):
-        hand_points = ags.get_hand_points(centers[i],
-                                                        poses[i,:,0], poses[i,:,1]).reshape(1,-1,3)#
-        grasps_hand_points = np.concatenate((grasps_hand_points,hand_points),axis=0)
+        hand_points = ags.get_hand_points(bottom_centers[i],
+                                                        poses[i,:,0], poses[i,:,1]).reshape(1,-1,3)#(1,21,3)
+        grasps_hand_points = np.concatenate((grasps_hand_points,hand_points),axis=0)#(-1,21,3)
 
     #求出虚拟夹爪各个点相对于世界坐标系W的坐标
     w_gp = np.swapaxes(np.matmul(wtc_r,np.swapaxes(grasps_hand_points,1,2)),1,2)+\
                                                 wtc_t.reshape(1,3) #(-1,21,3)
     w_pc=np.matmul(wtc_r,pc.T).T+\
                                                 wtc_t.reshape(1,3) #(-1,3)
+
     #判断夹爪各点是否低于桌面高度，设置容忍值
     lowest_points = np.min(w_gp[:,1:,2],axis = 1,keepdims = True)#np.where()
     #最低点高于桌面的抓取为True
@@ -475,12 +479,6 @@ def do_job(scene_index):
     save_path =os.path.join(os.path.split(raw_pc_path)[0],'legal_grasps_with_score.npy')
     np.save(save_path,legal_grasps_vector)
     print('Saved ',save_path)
-
-
-
-
-
-
 
 
 

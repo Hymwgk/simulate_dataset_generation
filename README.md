@@ -95,7 +95,7 @@
 
    有两个py脚本，两种采样方法都是Antipodal，但是并行计算结构不同：
 
-   - `sample_grasps_for_meshes.py`  单次只对一个物体进行并行多进程采样(优先使用该方法)  **（把要修改的参数暴露出来，并解释说明，还未完善）**
+   - `sample_grasps_for_meshes.py`  单次只对一个物体进行并行多进程采样(优先使用该方法)  
 
      `--gripper` 指定夹爪的型号
 
@@ -117,14 +117,21 @@
      $$
 
      ```bash
-     python sample_grasps_for_meshes.py  --gripper  panda --mode b  --rounds 1 --process_n 60  --grasp_n 200
+      #断点生成模式，进行一轮处理，此轮使用60个进程，每个采集200有效抓取
+     python sample_grasps_for_meshes.py  --gripper  panda --mode b  --rounds 1 --process_n 60  --grasp_n 200  
+     #生成结束后，进行打分等处理
+     python sample_grasps_for_meshes.py  --gripper  panda --mode p  
      ```
 
-   - `generate-dataset-canny.py`  旧版本的采样方法，同时对多个物体采样，每个物体只分配一个进程
+   - `generate-dataset-canny.py`  旧版本的采样方法，同时对多个物体采样，每个物体只分配一个进程，并使用pointnetgpd的方法打分
 
      ```bash
      python  generate-dataset-canny.py    --gripper panda   #夹爪名称
      ```
+
+   **TODO：**最好是，能将生成的所有抓取，进行一个重复性筛检，减少过多重复的抓取，因为，你想，对于小球，比如乒乓球，有效的抓取肯定很多，但是问题是，也必然存在大量的重复；后续如果我们希望对物体按照抓取数量进行排序，那小球会排的很高，但是显然，里面的太多抓取是重复的
+
+   
 
 7. 以交互界面形式查看已经采样出的抓取姿态
 
@@ -135,6 +142,10 @@
    
 
 8. 由于夹爪尺寸限制，有些模型采样得到的抓取较少，需要根据模型抓取采样结果的好坏多少，筛选出适合该特定夹爪的模型子集合用于场景仿真，它会在`~/dataset/simulate_grasp_dataset/panda/`文件夹下生成名为`good_meshes.pickle`的文件    **还未完善，需要等到上面的抓取生成后才行**
+
+   - 没有高于某分数抓取的模型不要
+   - 剔除掉人为设定的列表模型
+   - 随机从合法模型库中抽取并进行复制
 
    可以考虑：并不一定非要每种物体只有一个，可以把一些物体，重复几次
 
@@ -152,17 +163,25 @@
    python  generate_mujoco_xml.py  --gripper panda   --mesh_num  10   --scene_num  100   #夹爪名称    每个场景中包含10个物体    生成100个场景
    ```
 
-10. 读取各个场景的xml配置文件，利用Mujoco进行仿真，生成两类数据：1)筛选出自由落体稳定后仍然存在于桌面上的物体列表（包括背景桌子）；2)对应模型在空间中的位置姿态列表(平移向量+四元数) ；这两类数据共同以`table_meshes_with_pose.pickle`的形式保存在各自的场景文件夹中，该文件将为后续使用BlenSor进行点云仿真提供 场景模型(.obj格式)的路径和对应姿态。
+10. 读取各个场景的xml配置文件，利用Mujoco进行仿真，生成两类数据：
 
-   这一个步骤有一定的概率失败，并且最好是多进程共同仿真，**不过还未完善**
+    1)筛选出自由落体稳定后仍然存在于桌面上的物体列表（包括背景桌子）；
 
-   ```bash
-   python  poses_simulation.py   --gripper  panda   #夹爪名称
-   ```
+    2)对应模型在空间中的位置姿态列表(平移向量+四元数) ；
 
-11. 多进程渲染目标场景，这一步骤的夹爪需要在代码中改动，因为有个外部参数 `-P` 很麻烦；**后续可以尝试优化下**
+    这两类数据共同以`table_meshes_with_pose.pickle`的形式保存在各自的场景文件夹中，该文件将为后续使用BlenSor进行点云仿真提供 场景模型(.obj格式)的路径和对应姿态。
+
+    **ToDo: **这一个步骤有一定的概率失败，并且最好是多进程共同仿真
+
+    ```bash
+    python  poses_simulation.py   --gripper  panda   #夹爪名称
+    ```
+
+11. 多进程渲染目标场景，这一步骤的夹爪需要在代码中改动，因为有个外部参数 `-P` 很麻烦；
 
     默认选定同时渲染10个模拟场景的点云
+
+    **ToDo:**  不能每一帧场景只有一个点云，这样太浪费了，从不同的视角观察，至少每帧场景渲染4帧点云（从桌子四周观察）
 
     ```bash
     ~/.blensor/./blender  -P   ~/code/simulate_dataset_generation/raw_pc_generate.py    
@@ -178,7 +197,9 @@
     python  show_raw_pc.py  --gripper  panda  --show  5   #单独查看第5帧点云
     ```
 
-13. 多线程对场景中的候选抓取进行合法性检查
+13. 多线程对场景中的候选抓取进行合法性检查，并得到最终的合理候选抓取
+
+    
 
     主要检测虚拟夹爪是否与点云碰撞、虚拟夹爪是否与桌面碰撞或者低于桌面、限制抓取approach轴与桌面垂直桌面的角度、设定夹爪内部点云最小数量以及场景点云嵌入夹爪的最小深度，参数为：
 
@@ -186,8 +207,8 @@
 
     `--process_num`  设定同时多少个场景进行合法性检查
 
-    生成的合法抓取姿态以8维度向量（符合dex-net标准的7d位姿+1d 分数）的形式，保存在对应场景文件夹中，文件名统一为`legal_grasps_with_score.npy`
-
+    生成的合法抓取姿态以8维度向量（符合dex-net标准的7d位姿+1d 分数）的形式，保存在对应场景文件夹中，文件名统一为`legal_grasps_with_score.npy`，需要注意的是，最终的合法抓取姿态是与点云相互配准的，因此，夹爪姿态是相对于相机坐标系的。
+    
     ```python
     python get_legal_grasps_with_score   --gripper  panda  --process_num  30
     ```
@@ -195,11 +216,11 @@
     同时也有一个仅用于debug的单进程脚本
 
     `--load_npy` 出现该字眼则从外部读取结果，否则显示本次生成的结果
-
+    
     ```python
     python  get_legal_grasps_with_score_single_thread   --gripper  panda  --load_npy  
     ```
-
+    
     
 
 
@@ -213,9 +234,9 @@ cd /home/wgk/.mujoco/mujoco200/bin
 ./simulate
 ```
 
+![image-20210906143914883](README.assets/image-20210906143914883.png)
 
 
-![image-20210830104108635](README.assets/image-20210830104108635.png)
 
 
 

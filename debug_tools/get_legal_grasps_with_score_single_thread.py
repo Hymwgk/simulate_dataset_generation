@@ -8,18 +8,19 @@ import mayavi
 import numpy as np
 import pickle
 import glob
+import random
 from autolab_core import RigidTransform
 from autolab_core import YamlConfig
 from dexnet.grasping import GpgGraspSampler  
 from mayavi import mlab
-
+from tqdm import tqdm
 from dexnet.grasping import RobotGripper
 from numpy.core.fromnumeric import swapaxes
 
 
 #解析命令行参数
 parser = argparse.ArgumentParser(description='Get legal grasps with score')
-parser.add_argument('--gripper', type=str, default='panda')   #
+parser.add_argument('--gripper', type=str, default='baxter')   #
 parser.add_argument('--load_npy',action='store_true')  #设置同时处理几个场景
 
 args = parser.parse_args()
@@ -211,13 +212,13 @@ def collision_check_pc(centers,poses,scores,pc):
     bottom_centers = centers -ags.gripper.hand_depth * poses[:,:,0] 
     mask =np.zeros(centers.shape[0])
     #对每个抓取进行碰撞检测
-    for i,bottom_center in enumerate(bottom_centers):
+    for i in tqdm(range(len(bottom_centers)),desc='collision_check_pc'):
         approach_normal = poses[i,:,0] #approach轴
         binormal = poses[i,:,1]#
         minor_pc = poses[i,:,2]
         hand_points = ags.get_hand_points(np.array([0, 0, 0]), np.array([1, 0, 0]), np.array([0, 1, 0]))#
         #检查与点云的碰撞情况
-        collision = ags.check_collide(bottom_center,approach_normal,
+        collision = ags.check_collide(bottom_centers[i],approach_normal,
                                 binormal,minor_pc,pc,hand_points,vis=False)
         if  collision:
             mask[i]=1
@@ -228,19 +229,23 @@ def collision_check_pc(centers,poses,scores,pc):
     bad_free_grasps_pose = poses[mask==1]
     return good_grasps_center,good_free_grasps_pose,good_scores,bad_grasps_center,bad_free_grasps_pose
 
-def collision_check_table(centers,poses,scores,table_hight = 0.75,safe_dis = 0.01):
+def collision_check_table(centers,poses,scores,table_hight = 0.75,safe_dis = 0.0):
     """对夹爪进行批量的碰桌子检测，夹爪上面的最低点不允许低于桌子高度
     """
     #先批量取出虚拟夹爪各点相对于相机坐标系C的坐标
     grasps_hand_points = np.empty([0,21,3])
-    for i in range(poses.shape[0]):
-        hand_points = ags.get_hand_points(centers[i],
-                                                        poses[i,:,0], poses[i,:,1]).reshape(1,-1,3)#
-        grasps_hand_points = np.concatenate((grasps_hand_points,hand_points),axis=0)
+    #批量获取bottom_centers 用于碰撞检测
+    bottom_centers = centers -ags.gripper.hand_depth * poses[:,:,0] 
 
-    #求出虚拟夹爪各个点相对于世界坐标系W的坐标
+    for i in range(poses.shape[0]):
+        hand_points = ags.get_hand_points(bottom_centers[i],
+                                                        poses[i,:,0], poses[i,:,1]).reshape(1,-1,3)#(1,21,3)
+        grasps_hand_points = np.concatenate((grasps_hand_points,hand_points),axis=0)#(-1,21,3)
+
+    #求出虚拟夹爪各角点相对于世界坐标系W的坐标
     w_gp = np.swapaxes(np.matmul(world_to_scaner_rot,np.swapaxes(grasps_hand_points,1,2)),1,2)+\
                                                 world_to_scaner_trans.reshape(1,3) #(-1,21,3)
+    #也求出世界坐标系下的点云坐标
     w_pc=np.matmul(world_to_scaner_rot,pc.T).T+\
                                                 world_to_scaner_trans.reshape(1,3) #(-1,3)
     #判断夹爪各点是否低于桌面高度，设置容忍值
@@ -308,8 +313,10 @@ def restrict_pc_num_deepth(centers,poses,scores,minimum_points_num=30,minimum_in
 def show_grasps_pc(pc,good_centers,good_poses,bad_centers=None,bad_poses=None,title=None):
     """显示点云和抓取，仅限于单进程debug
     """
-    mlab.figure(figure=title,bgcolor=(1, 1, 1), fgcolor=(0.7, 0.7, 0.7), size=(1000, 1000))
+     
+    mlab.figure(figure=title+'_good grasp',bgcolor=(1, 1, 1), fgcolor=(0.7, 0.7, 0.7), size=(1000, 1000))#创建一个窗口
     _ = show_points(pc)
+    print(title+'_good grasp:{}'.format(good_centers.shape[0]))
     for index,center in enumerate(good_centers):
         display_grasps(center,good_poses[index],color="d")
         grasp_bottom_center = -ags.gripper.hand_depth * good_poses[index][:,0] + center
@@ -320,6 +327,19 @@ def show_grasps_pc(pc,good_centers,good_poses,bad_centers=None,bad_poses=None,ti
     if bad_centers is None or bad_poses is None:
         pass
     else:
+        mlab.figure(figure=title+'_bad grasp',bgcolor=(1, 1, 1), fgcolor=(0.7, 0.7, 0.7), size=(1000, 1000))#创建一个窗口
+        _ = show_points(pc)
+        #如果错误抓取太多，就随机抽选一些,方便显示
+        max_n =200 
+        if bad_centers.shape[0]>max_n:
+            print(title+'_bad grasp:{} ,  show random {} grasps here'.format(bad_centers.shape[0],max_n))
+            mask = random.sample(range(bad_centers.shape[0]),max_n)
+            bad_centers=bad_centers[mask]
+            bad_poses = bad_poses[mask]
+        else:
+            print(title+'_bad grasp:{}'.format(bad_centers.shape[0]))
+
+
         for index,center in enumerate(bad_centers):
             display_grasps(center,bad_poses[index],color=(1,0,0))
             grasp_bottom_center = -ags.gripper.hand_depth * bad_poses[index][:,0] + center
@@ -408,10 +428,8 @@ if __name__ == '__main__':
 
 
             #将所有的模型的grasp  统一添加到场景的grasp 列表中
-            #grasps_center = np.r_[grasps_center,scaner_to_grasps_trans]
-            grasps_center = np.concatenate((grasps_center,scaner_to_grasps_trans),axis=0)
-            #grasps_pose = np.r_[grasps_pose,scaner_to_grasps_rot]
-            grasps_pose=np.concatenate((grasps_pose,scaner_to_grasps_rot),axis=0)
+            grasps_center = np.concatenate((grasps_center,scaner_to_grasps_trans),axis=0)#()
+            grasps_pose=np.concatenate((grasps_pose,scaner_to_grasps_rot),axis=0)#(-1,3,3)
             #抽出对应分数
             grasps_score = np.concatenate((grasps_score,grasps_with_score[:,[10]]),axis=0)  #(-1,1)
 
@@ -425,7 +443,11 @@ if __name__ == '__main__':
             show_grasps_pc(pc,temp_good_grasps_center,temp_good_grasps_pose,title='外部导入结果')
 
         else:
+            #显示点云与抓取，仅限于debug
+            #show_grasps_pc(pc,grasps_center,grasps_pose,title='raw_grasps')
+
             #对旋转后的抓取，逐个进行碰撞检测，并把没有碰撞的抓取保存下来
+            print('collision_check_pc')
             temp_good_grasps_center,temp_good_grasps_pose,temp_good_grasps_score,bad_centers,bad_poses\
                 =collision_check_pc(grasps_center,grasps_pose,grasps_score,pc)
 
@@ -434,6 +456,7 @@ if __name__ == '__main__':
             #bad_centers,bad_poses,title='夹爪点云碰撞检测')
 
             #保存不与桌子碰撞的抓取
+            print('collision_check_table')
             temp_good_grasps_center,temp_good_grasps_pose,temp_good_grasps_score,bad_centers,bad_poses\
                 =collision_check_table(temp_good_grasps_center,temp_good_grasps_pose,temp_good_grasps_score)
 
@@ -442,6 +465,7 @@ if __name__ == '__main__':
             #bad_centers,bad_poses,title='夹爪桌面碰撞检测')
 
             #限制抓取approach轴与桌面垂直方向的角度
+            print('restrict_approach_angle')
             temp_good_grasps_center,temp_good_grasps_pose,temp_good_grasps_score,bad_centers,bad_poses\
                 =restrict_approach_angle(temp_good_grasps_center,temp_good_grasps_pose,
                 temp_good_grasps_score,max_angle=50)
@@ -451,6 +475,7 @@ if __name__ == '__main__':
             #bad_centers,bad_poses,title='限制抓取角度')
 
             #限制夹爪内部点云点最小数量，以及限制夹爪内部点云的最小深度
+            print('restrict_pc_num_deepth')
             temp_good_grasps_center,temp_good_grasps_pose,temp_good_grasps_score,bad_centers,bad_poses\
                 =restrict_pc_num_deepth(temp_good_grasps_center,temp_good_grasps_pose,
                 temp_good_grasps_score,30,0.01)
@@ -485,7 +510,7 @@ if __name__ == '__main__':
             #将拼接好的7d抓取向量，再次转化为旋转和平移两部分，显示出来,debug
             temp_good_grasps_center = legal_grasps_vector[:,0:3]
             temp_good_grasps_pose = get_rot_mat(legal_grasps_vector)
-            show_grasps_pc(pc,temp_good_grasps_center,temp_good_grasps_pose,title='重显')
+            #show_grasps_pc(pc,temp_good_grasps_center,temp_good_grasps_pose,title='重显')
         
 
 

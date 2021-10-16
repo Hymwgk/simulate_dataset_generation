@@ -4,7 +4,7 @@ Dex-Net设定，坐标系主要有如下三种：
 
 1.  $W$  （世界）参考坐标系  
 2.  $M$    夹爪mesh模型坐标系 
-3.  $G'$   夹爪坐标系 gripper frame 
+3.  $G'$   夹爪坐标系 gripper frame 夹爪坐标系固定在实际的机器人夹爪上，不同于抓取坐标系，抓取坐标系是夹爪坐标系的目标位置
 4.  $GP$    抓取碰撞检测坐标系     collision check frame
 5.  $G$     抓取典范坐标系，简称抓取坐标系， grasp canonical frame 。在dex-net中，抓取典范坐标系$G$与虚拟夹爪的固连方式不一定   和   夹爪坐标系$G'$ 与真实夹爪相同。
 
@@ -42,6 +42,8 @@ Dex-Net设定，坐标系主要有如下三种：
 ## 抓取碰撞检测坐标系  collision check frame
 
 与抓取典范坐标系有些相似，只是坐标系原点移动到了grasp bottom center位置处，这个坐标系一眼在代码里用于某个抓取姿态下，夹爪与环境的碰撞检测，因为图上的各个标号点的位置计算，都是根据bottom center坐标以及三个坐标轴的向量确定的。
+
+但是注意，采样出来的抓取，都是以抓取典范坐标系表示的，而非碰撞坐标系。
 
 <img src="Dex-net典范抓取坐标系与求解.assets/image-20210904192108478.png" alt="image-20210904192108478" style="zoom: 50%;" />
 
@@ -85,7 +87,7 @@ Dex-net设定的抓取典范坐标系定义满足右手定则，保证了典范�
 
 ### 抓取姿态的表示(7维度抓取向量)
 
-在抓取采样时，一个具体的抓取姿态，可以使用典范抓取坐标系G与mesh坐标系M的相对变换关系$^{M}T_G$ 来确定，Dex-net使用了一个7维度的向量$g=(p,axis,\theta)\in \mathbb{R}^7$来表示这个变换关系，其中$p=(x,y,z)\in \mathbb{R}^3$为坐标系原点， $axis=(axis_x,axis_y,axis_z)\in \mathbb{R}^3$代表典范坐标系y轴的单位向量， $\theta\in [-\pi,\pi]$ 为典范坐标系绕G-Y轴的旋转量（具体旋转起点）。
+在抓取采样时，一个具体的抓取姿态，可以使用典范抓取坐标系G与mesh坐标系M的相对变换关系$^{M}T_G$ 来确定，Dex-net在使用Antipodal等采样法对mesh模型C采样候选抓取时，使用一个7维度的向量$g=(p,axis,\theta)\in \mathbb{R}^7$来表示变换关系$^{M}T_G$ ，其中$p=(x,y,z)\in \mathbb{R}^3$为坐标系原点， $axis=(axis_x,axis_y,axis_z)\in \mathbb{R}^3$代表典范坐标系y轴的单位向量， $\theta\in [-\pi,\pi]$ 为典范坐标系绕G-Y轴的旋转量（具体旋转起点）。
 
 包括抓取采样算法获得的候选抓取姿态，都是使用的$g=(p,axis,\theta)\in \mathbb{R}^7$来进行的表示，以下是抓取采样器输出的抓取向量，Dex-net除了输出位置姿态外，还输出了一些夹爪张开宽度等参数，拓展成为10维度向量，代表一个完整的抓取配置`Grasp configuration`：
 
@@ -242,5 +244,123 @@ dex-net采样得到的初步抓取姿态是典范抓取坐标系姿态，在实�
 
 另外可以使用`dexnet.grasping.ParallelJawPtGrasp3D.gripper_pose( gripper=None)`函数来直接返回指定型号夹爪的夹爪坐标系与物体mesh坐标系之间的变换
 
-<img src="Dex-net典范抓取坐标系与求解.assets/image-20210829214218341.png" alt="image-20210829214218341"  />
+![image-20210906085839583](Dex-net典范抓取坐标系与求解.assets/image-20210906085839583.png)
+
+
+
+
+
+
+
+## 抓取姿态的表示
+
+一个抓取的位置姿态，最少只需要6个自由度表示，但是标准的$4\times4$变换矩阵一共存在12个未知数，
+$$
+^{C}T_G= \begin{bmatrix}n_x&o_x&a_x&t_x\\n_y&o_y&a_y&t_y\\n_z&o_z&a_z&t_z\\0&0&0&1\\\end{bmatrix}=\begin{bmatrix}R&\vec{t}\\0&1 \end{bmatrix}
+$$
+显然，该表达式中必定存在一定的约束条件将上述的信息约束为6，约束条件为：
+
+- 三个向量$n,o,a$相互垂直；
+- 每个由方向余弦表示的单位向量长度为1
+
+因此，除了位置向量$\vec{t}=(o_x,o_y,o_z)$是必须给定的之外，旋转矩阵中的9个未知量，最少只需要3个即可推导出其他的三个值。
+
+**例子1：**对于夹爪坐标系$G$在相机参考系$C$下的变换为
+$$
+^{C}T_G=\begin{bmatrix}?&0&?&3\\0.5&?&?&9\\0&?&?&7\\0&0&0&1\end{bmatrix}
+$$
+此时，旋转矩阵中只给定$n_y=0.5,n_z=0,o_a=0$这三个量，既可完全解出
+$$
+^{C}T_G=\begin{bmatrix}0.866&0&0.5&3\\0.5&0&-0.866&9\\0&1&0&7\\0&0&0&1\end{bmatrix}
+$$
+
+
+**例子2**
+
+并不是随意给定都能得到唯一的旋转矩阵，对于夹爪坐标系$G$在相机参考系$C$下的变换为
+$$
+^{C}T_G=\begin{bmatrix}?&0&?&5\\0.707&?&?&3\\?&?&0&2\\0&0&0&1\end{bmatrix}
+$$
+通过上述约束可以推算出，该位置姿态为：
+$$
+^{C}T_G=\begin{bmatrix}0.707&0&0.707&5\\0.707&0&-0.707&3\\0&1&0&2\\0&0&0&1\end{bmatrix} 或^{C}T_G=\begin{bmatrix}-0.707&0&-0.707&5\\0.707&0&-0.707&3\\0&1&0&2\\0&0&0&1\end{bmatrix} 
+$$
+
+
+
+
+一个抓取的姿态，可以使用$g=(p,r)=(p_x,p_y,p_z,r_x,r_y,r_z)\in \mathbb{R^6}$来表示，那为什么不直接回归$(p_x,p_y,p_z,r_x,r_y,r_z)$呢？
+
+
+
+论文一直强调，抓取姿态空间是不连续的是什么意思？
+
+
+
+# Dex-net 虚拟夹爪参数设定
+
+
+
+dex-net中，使用到夹爪的步骤主要有两个：
+
+- 抓取采样阶段
+- 显示夹爪以及碰撞检测阶段
+
+这两阶段的参数，都在`dex-net/data/grippers/<gripper name>/params.json`中进行定义。
+
+## 用于抓取采样
+
+这些参数仅用于采样，所以，夹爪只需要知道最大宽度和最大深度等等一些基本的参数就行，此时不考虑夹爪的具体“厚度”，也不考虑由于夹爪指头的粗细导致的与物体的碰撞检测，比如插入马克杯子握把；具体的碰撞检测放在后续的阶段处理。
+```bash
+"min_width":      #夹爪的最小闭合宽度
+"force_limit":      #抓取力度限制
+"max_width":     #夹爪最大张开距离                                                                                                         dist<1,2>
+"finger_radius": #这个参数按照默认的0.01就行，不懂，也好像没用到
+"max_depth":     #夹爪的最大深度，竖向的距离                                                                                  dist<1,5>     
+```
+
+
+
+
+
+## 用于显示和碰撞检测
+
+如果还需要进行与点云等碰撞检测，那么需要设定如下参数：
+
+```bash
+"hand_depth":                          #和max_depth设置相同数字                                                                        dist<1,5>
+"hand_height": 					       #夹爪的minor_pc方向的厚度                                                                       dist<1,4>
+"finger_width":                         #夹爪手指头在binormal方向的厚度                                                           dist<1,9>
+"hand_outer_diameter":      #两个手指外侧在binormal方向的宽度                                                      dist<9,13>
+"real_finger_width":               #也是两个夹爪的厚度，和finger_width写一样就行                             dist<1,9>
+"real_hand_depth":                #和hand_depth保持一致，代码中两者是相同的                                   dist<1,5>
+```
+
+
+
+<img src="Dex-net典范抓取坐标系与求解.assets/image-20210907165347485.png" alt="image-20210907165347485" style="zoom:50%;" />
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 

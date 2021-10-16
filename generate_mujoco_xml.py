@@ -12,9 +12,9 @@ import argparse
 
 #解析命令行参数
 parser = argparse.ArgumentParser(description='Generate Mujoco xml files')
-parser.add_argument('--gripper', type=str, default='panda')
+parser.add_argument('--gripper', type=str, default='baxter')
 parser.add_argument('--mesh_num', type=int, default=10)
-parser.add_argument('--scene_num', type=int, default=10)
+parser.add_argument('--scene_num', type=int, default=500)
 args = parser.parse_args()
 
 
@@ -57,7 +57,7 @@ if __name__ == '__main__':
 
 
     #场景文件夹主目录
-    scenes_dir = home_dir+'/dataset/simulate_grasp_dataset/panda/scenes/'
+    scenes_dir = home_dir+'/dataset/simulate_grasp_dataset/baxter/scenes/'
 
 
     xml_template_string = """<?xml version="1.0" ?>
@@ -195,8 +195,11 @@ if __name__ == '__main__':
             rot_z = round(random.random()*3.14,2)
             rot = str(rot_x)+" "+str(rot_y)+" "+str(rot_z)
 
-            temp_string +="    <body name=\""+mesh_list_[i]+"\" pos=\""+pos+"\" euler=\""+rot+"\">\n      \
-                <joint name=\"joint"+str(i)+"\" type=\"free\"/>\n      <geom type=\"mesh\" mesh=\""+mesh_list_[i]+"\"   />\n    </body>\n"
+            name = mesh_list_[i]
+
+
+            temp_string +="    <body name=\""+name+"\" pos=\""+pos+"\" euler=\""+rot+"\">\n      \
+                <joint name=\"joint"+str(i)+"\" type=\"free\"/>\n      <geom type=\"mesh\" mesh=\""+name+"\"   />\n    </body>\n"
         #查找body标签并分割
         temp_list = xml_string.split("    <body/>\n")
         xml_string = temp_string.join(temp_list)
@@ -204,7 +207,7 @@ if __name__ == '__main__':
 
         #场景的具体名称
         new_xml_name = ""  #清零
-        new_xml_name = "scene_"+str(scene_n)+".xml"
+        new_xml_name = "scene_mujoco"+".xml"
 
         #找到对应的场景文件夹目录，没有的话就创建
         scene_dir = os.path.join(scenes_dir+str(scene_n).zfill(max_digits))
