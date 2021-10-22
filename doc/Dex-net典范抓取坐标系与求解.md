@@ -124,12 +124,18 @@ Dex-net设定的抓取典范坐标系定义满足右手定则，保证了典范�
 考虑如下的情况（即仅考虑旋转）,假设抓取坐标系G-Y轴向量与模型参考系M-Y重合时，即$\vec{axis}=(0,1,0)$ 时
 
 1. 选取向量$\vec{approach'}=(axis_y,-axis_x,0)=(1,0,0)$ 作为临时approach轴，此时该向量与G-Y轴垂直，且满足G-Z坐标值为0，即与M:X-O-Y平面平行
-
 2. 将$\vec{approach'}$绕G-Y轴旋转$\alpha$角，得到抓取坐标系的approach向量（G-X轴）
-
 3. 使用符合右手螺旋定律的叉乘，找到G-Z轴
 
+
+
 <img src="Dex-net典范抓取坐标系与求解.assets/image-20210829193716537.png" alt="image-20210829193716537" style="zoom:50%;" />
+
+一般情况：
+
+1. 在模型参考系M:X-O-Y平面中找到一条与G-Y轴垂直的向量，作为临时$\vec{approach'}$轴
+2. 将临时$\vec{approach'}$轴绕G-Y轴正方向旋转$\alpha$角，得到真实G-X轴即$\vec{approach}$轴。
+3. 使用符合右手螺旋定律进行叉乘，得到G-Z轴
 
 
 
