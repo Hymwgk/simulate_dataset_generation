@@ -206,6 +206,10 @@ if __name__ == '__main__':
                 break
     [p.join() for p in pool]  #等待所有进程结束
 
+    '''处理仿真仿真失败的情况
+    有一些xml文件在进行仿真时，会出现仿真失败的情况
+    这里将周边成功场景的仿真结果拷贝到失败文件夹中
+    '''
     if len(failed_list)!=0:
         print(failed_list)
         failed_list = [x for x in failed_list] #失败场景的索引
@@ -225,7 +229,6 @@ if __name__ == '__main__':
             for files in success_files:
                 mycopyfile(files,failed_dir)
         
-
     print('All job done.')
 
 

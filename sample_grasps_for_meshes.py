@@ -283,19 +283,21 @@ def point_net_gpd_(grasps_with_score,obj,object_name,grasps_file_dir):
         canny_quality_config[value_fc] = GraspQualityConfigFactory.create_config(
             yaml_config['metrics']['robust_ferrari_canny'])
 
-    #填充一个与摩擦数量相同的数组，每个对应的元素都是0
-    good_count_perfect = np.zeros(len(fc_list))
+    good_count_perfect = np.zeros(len(fc_list))#填充一个与摩擦数量相同的数组，每个对应的元素都是0
     count = 0
-    #设置每个摩擦值需要计算的最少抓取数量 （根据指定输入值20）
-    minimum_grasp_per_fc = 30     
+    minimum_grasp_per_fc = 30#设置每个摩擦值需要计算的最少抓取数量 （根据指定输入值20）     
 
-
-    temp_file_name =grasps_file_dir+object_name+ '_pgpd-temp.pickle'
+    
+    '''执行力闭合&Canny打分 将中间打分结果保存下来
+    为每个抓取分配两部分分数：力闭合分数，canny分数    
+    
+    '''
+    temp_file_name =grasps_file_dir+object_name+ '_pgpd-temp.pickle'#中间打分文件路径
     if os.path.exists(temp_file_name):#读取之前生成好的文件
         with open(temp_file_name, 'rb') as f:
             all_grasp = pickle.load(f)
             print('Load ', temp_file_name)
-    else:#如果是第一次执行就生成文件并保存到硬盘
+    else:
         for i,grasp_with_score in enumerate(grasps_with_score):
             print('模型{}打分:{}/{}'.format(object_name,i,len(grasps_with_score)))
             grasp = grasp_with_score[0]
@@ -331,7 +333,7 @@ def point_net_gpd_(grasps_with_score,obj,object_name,grasps_file_dir):
             pickle.dump(all_grasp, f)
 
 
-    #打分完了，生成单一的score
+    #力闭合与Canny打分完毕，生成单一的score，并保存
     alpha = 1.0
     beta = 0.01
     tmp = np.empty(shape=(0,12))
@@ -368,6 +370,7 @@ def point_net_gpd_(grasps_with_score,obj,object_name,grasps_file_dir):
     grasp_file_name =grasps_file_dir+object_name+ '_pgpd{}.npy'.format(len(final_grasps))
     np.save(grasp_file_name, final_grasps)
     '''
+    #筛选在某最低分数阈值以上的抓取，并保存
     tmp= tmp[tmp[:,-2]>2]
     final_grasps = tmp
     grasp_file_name =grasps_file_dir+object_name+ '_pgpd{}.npy'.format(len(final_grasps))
@@ -413,25 +416,26 @@ if __name__ == '__main__':
     gripper_name=args.gripper
     home_dir = os.environ['HOME']
     
-    #读取CAD模型路径列表
+    #读取stl模型路径列表
     file_dir = home_dir + "/dataset/simulate_grasp_dataset/ycb/google_512k/"   #获取模型的路径
     file_list_all = get_file_name(file_dir)   #返回所有cad模型所处的文件夹的路径列表
 
-    #设置结果保存路径
+    #设置grasp sample result 保存路径
     grasps_file_dir = home_dir+"/dataset/simulate_grasp_dataset/{}/antipodal_grasps/".format(gripper_name)
     if not os.path.exists(grasps_file_dir):
         os.makedirs(grasps_file_dir)
 
-    #设置抓取采样器
+    #设置夹爪尺寸参数，选择使用Antipodal grasp sampler
     yaml_config = YamlConfig(home_dir + "/code/dex-net/test/config.yaml")#读取采样器初始化配置文件
     gripper = RobotGripper.load(gripper_name, home_dir + "/code/dex-net/data/grippers") #加载夹爪配置参数，初始化夹爪对象
     grasp_sampler= AntipodalGraspSampler(gripper, yaml_config)#读取夹爪对象与采样器配置，初始化指定的采样器
 
-    #利用模型构造符合dex-net库的待抓取对象
-    #并保存到硬盘，目的是加快二次计算，减少计算量
-    dex_net_graspables ={}
+    '''利用CAD模型构造符合dex-net库的待抓取对象
+    并保存到硬盘，目的是加快二次计算，减少计算量
+    '''
+    dex_net_graspables ={}#
     for object_path in file_list_all:
-        object_name = object_path.split('/')[-1] #模型名称
+        object_name = object_path.split('/')[-1] #获取模型名称
         pickel_name = os.path.join(object_path,"google_512k","dex_net_graspable.pickle")#待抓取对象的路径
         if os.path.exists(pickel_name):#读取之前生成好的文件
             with open(pickel_name, 'rb') as f:
@@ -442,9 +446,9 @@ if __name__ == '__main__':
                 pickle.dump(dex_net_graspables[object_name], f)
 
 
-    #
+    
     mangaer = multiprocessing.Manager()
-    #如果是b和r模式
+    #b模式（断点采样模式）和r模式（重新采样模式）
     if args.mode!='p':
         #对每个待抓取模型采样候选抓取
         for obj_index, object_path in enumerate(file_list_all):
@@ -452,6 +456,7 @@ if __name__ == '__main__':
             object_name = object_path.split('/')[-1] #截取目标对象名称
             print("{}开始采样".format(object_name))
             time.sleep(1)
+            #
             original_grasp_file_name =  grasps_file_dir+"original_{}.pickle".format(object_name)#预备生成的文件名称 
 
             #断点生成模式时，会跳过已经生成好的结果
@@ -460,16 +465,16 @@ if __name__ == '__main__':
                 #time.sleep(1)
                 continue
             
-            #多进程执行抓取采样
+            #对某个模型   进行多进程抓取采样
             dex_net_graspable =  dex_net_graspables[object_name]#加载待抓取模型
             cores = multiprocessing.cpu_count()#获得计算机的核心数
             #在这里修改同时使用多少个进程执行采样，最好不超过计算机的核心数
             processes_num = args.process_n
-            if processes_num>=cores:
+            if processes_num>=cores:#防止设置的进程数超过cpu核心数
                 print('\'process_n\'  too large!  Set  \'process_n\' less than {}'.format(cores))
                 raise NameError()
             
-            for _ in range(args.rounds):#设置外部轮数
+            for _ in range(args.rounds):#进行args.rounds轮抓取 默认为1轮
                 pool =[]
                 for i in range(processes_num):
                     pool.append(multiprocessing.Process(target=do_job, args=(i,grasps_with_score)))
@@ -478,7 +483,6 @@ if __name__ == '__main__':
                 #等待所有进程结束，返回主进程
                 [p.join() for p in pool]                  
                 #pool.join()
-
             print("==========={}共获得{}个grasp=============".format(object_name,len(grasps_with_score)))
             #转化成为普通list
             grasps_with_score  = [x for x in grasps_with_score]
@@ -489,51 +493,46 @@ if __name__ == '__main__':
             #保存下来这些原始的采样数据，采样一次挺不容易的
             with open(original_grasp_file_name, 'wb') as f:
                 pickle.dump(original_grasps, f)
+        print("All job done")
 
-
-    else:#处理模式，对之前生成好的原始抓取文件做进一步处理
+    else:#process mode，读取预先生成好的原始抓取文件做分数筛选等处理
         print('打分处理模式 -p')
         #尝试获取外部文件列表
         objects_name_list =[]  # 
         original_grasp_files = glob.glob(grasps_file_dir+'original_*')  #raw  grasp files path
         all_objects_original_grasps = [] #raw grasps
-        #如果外部有指定文件,就从外部读取之前生成好的抓取
+        #读取b/r模式采样出的抓取文件
         if len(original_grasp_files)!=0:
             print("There is {} original grasp files".format(len(original_grasp_files)))
-            #print(original_grasp_files)
-            #读取所有的抓取
             for file in original_grasp_files:
                 objects_name_list.append(file.split('original_')[-1].split('.')[0])
                 with open(file, 'rb') as f:
                     all_objects_original_grasps.append(pickle.load(f))
         else:
             print("There is no original grasp files!")
+            sys.exit(1)#表示异常退出程序
 
-
-    #多进程对原始抓取文件进行处理
-    pool_size= multiprocessing.cpu_count() #
-    if pool_size>len(objects_name_list):#限制进程数小于目标物体数量
-        pool_size = len(objects_name_list)
-    #pool_size = 1#调试
-    obj_index = 0
-    pool = []
-    for i in range(pool_size):  
-        pool.append(multiprocessing.Process(target=grasp_marking,args=(obj_index,)))
-        obj_index+=1
-    [p.start() for p in pool]  #启动多进程
-    #refull
-    while obj_index<len(objects_name_list):    #如果有些没处理完
-        for ind, p in enumerate(pool):
-            if not p.is_alive():
-                pool.pop(ind)
-                p = multiprocessing.Process(target=grasp_marking, args=(obj_index,))
-                obj_index+=1
-                p.start()
-                pool.append(p)
-                break
-    [p.join() for p in pool]  #等待所有进程结束
-
-
-
-    print('All job done.')
+        #接着多进程对原始抓取文件进行处理
+        pool_size= multiprocessing.cpu_count() #
+        if pool_size>len(objects_name_list):#限制进程数小于目标物体数量
+            pool_size = len(objects_name_list)
+        #pool_size = 1#调试
+        obj_index = 0
+        pool = []
+        for i in range(pool_size):  
+            pool.append(multiprocessing.Process(target=grasp_marking,args=(obj_index,)))
+            obj_index+=1
+        [p.start() for p in pool]  #启动多进程
+        #refull
+        while obj_index<len(objects_name_list):    #如果有些没处理完
+            for ind, p in enumerate(pool):
+                if not p.is_alive():
+                    pool.pop(ind)
+                    p = multiprocessing.Process(target=grasp_marking, args=(obj_index,))
+                    obj_index+=1
+                    p.start()
+                    pool.append(p)
+                    break
+        [p.join() for p in pool]  #等待所有进程结束
+        print('All job done.')
     

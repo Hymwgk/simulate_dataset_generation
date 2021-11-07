@@ -1,6 +1,7 @@
 from multiprocessing import Pool, cpu_count
 import os, time, random
 from tqdm import tqdm
+import glob
 
 
 class MyMultiprocess(object):
@@ -20,8 +21,23 @@ def func(num):
         # time.sleep(random.random() * 3)
         time.sleep(1)
 
+def takeSceneIndex(elem):
+    index = elem.split('/')[-2]
+    return int(index)
 
 if __name__ == "__main__":
+
+    home_dir = os.environ['HOME']
+    #场景文件夹
+    scenes_dir = home_dir+"/dataset/simulate_grasp_dataset/baxter/scenes/"
+    scenes_grasp_file_paths = glob.glob(scenes_dir+'*/legal_grasps_with_score.npy')
+    print(type(scenes_grasp_file_paths))
+    scenes_grasp_file_paths.sort()
+
+    raw_pc_paths = glob.glob(scenes_dir+'*/raw_pc.npy')
+
+
+
     print('父进程 %s.' % os.getpid())
     mymultiprocess = MyMultiprocess(cpu_count())
     start = time.time()

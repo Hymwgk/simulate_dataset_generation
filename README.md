@@ -171,7 +171,7 @@
 
     这两类数据共同以`table_meshes_with_pose.pickle`的形式保存在各自的场景文件夹中，该文件将为后续使用BlenSor进行点云仿真提供 场景模型(.obj格式)的路径和对应姿态。
 
-    **ToDo: **这一个步骤有一定的概率失败，并且最好是多进程共同仿真
+    **ToDo: **这一个步骤有一定的概率失败，并且最好是多进程共同仿真（已经做好了多进程并行仿真，利用周边的东西）
 
     ```bash
     python  poses_simulation.py   --gripper  panda   #夹爪名称
@@ -221,6 +221,16 @@
     python  get_legal_grasps_with_score_single_thread   --gripper  panda  --load_npy  
     ```
     
+14. 对计算出的合法抓取作做拓展数据集合处理，主要包含如下处理
+
+    对场景中的抓取进行贪婪聚类，聚类出多个group；
+
+    计算每个group的抓取分数的总和，根据group分数总和来对所有group进行从高到低排序
+
+    设置数量阈值，每个场景仅保留最靠前的n个group
+
+    对group内部的夹爪计算周边区域，并计算整体group的周边点，记录成为索引
+
     
 
 

@@ -19,6 +19,7 @@ from autolab_core import YamlConfig
 from mayavi import mlab
 from dexnet.grasping import GpgGraspSampler  # temporary way for show 3D gripper using mayavi
 import glob
+import pickle
 
 import argparse
 
@@ -35,7 +36,7 @@ yaml_config = YamlConfig(home_dir + "/code/dex-net/test/config.yaml")
 gripper = RobotGripper.load(args.gripper, home_dir + "/code/dex-net/data/grippers")
 ags = GpgGraspSampler(gripper, yaml_config)
 
-save_fig = False  # save fig as png file
+save_fig = True  # save fig as png file
 show_fig = True  # show the mayavi figure
 generate_new_file = False  # whether generate new file for collision free grasps
 check_pcd_grasp_points = False
@@ -52,8 +53,10 @@ def open_npy_and_obj(name_to_open_):
     print(object_name_)
 
     ply_path_ = file_dir+object_name_+'_google_512k/'+object_name_+ "/google_512k/nontextured.ply"
-    obj_path_= file_dir+object_name_+'_google_512k/'+object_name_+"/google_512k/nontextured.obj"
+    obj_path_= home_dir + "/dataset/simulate_grasp_dataset/ycb/google_16k/"+object_name_+"/google_16k/textured.obj"
     sdf_path_= file_dir+object_name_+'_google_512k/'+object_name_+"/google_512k/nontextured.sdf"
+    graspable= file_dir+object_name_+'_google_512k/'+object_name_+"/google_512k/dex_net_graspable.pickle"
+
 
     if not check_pcd_grasp_points:
         #读取相关的obj以及sdf模型文件
@@ -62,7 +65,8 @@ def open_npy_and_obj(name_to_open_):
         mesh = of.read()
         sdf = sf.read()
         #dex-net格式的可抓取对象
-        obj_ = GraspableObject3D(sdf, mesh)
+        with open(graspable, 'rb') as f:
+            obj_= pickle.load(f)
     else:
         cloud_path = home_dir + "/dataset/ycb_rgbd/" + object_name_ + "/clouds/"
         pcd_files = glob.glob(cloud_path + "*.pcd")
@@ -176,22 +180,26 @@ def show_selected_grasps_with_color(m, ply_name_, title, obj_):
         print('No good grasps! Show next mesh')
         return 0
     #从优质的抓取中随机抽取出25个（如果都要的话，就太多了，不易于显示）
-    max_n =150
+    max_n =25
     if len(m_good)>max_n:
         print('Got {} good grasps, show random {} grasps'.format(len(m_good),max_n))
+        info_good = 'Total:{}'.format(len(m)) + ' Good:{}'.format(len(m_good))+' Show:{}'.format(max_n)
         m_good = m_good[np.random.choice(len(m_good), size=max_n, replace=True)]
     else:
         print('Show {} good grasps'.format(len(m_good)))
+        info_good = 'Total:{}'.format(len(m)) + ' Good:{}'.format(len(m_good))+' Show:{}'.format(len(m_good))
 
     #筛选出不合格抓取
     m_bad = m[m[:, -2] <= 0.55]
     #抽选显示
     if len(m_bad)>max_n:
         print('Got {} bad grasps, show random {} grasps'.format(len(m_bad),max_n))
+        info_bad = 'Total:{}'.format(len(m)) + ' bad:{}'.format(len(m_bad))+' Show:{}'.format(max_n)
         m_bad = m_bad[np.random.choice(len(m_bad), size=max_n, replace=True)]
     else:
         print('Show {} bad grasps'.format(len(m_bad)))
-        
+        info_bad = 'Total:{}'.format(len(m)) + ' bad:{}'.format(len(m_bad))+' Show:{}'.format(len(m_bad))
+
     collision_grasp_num = 0
     if save_fig or show_fig:
         # fig 1: good grasps
@@ -206,27 +214,30 @@ def show_selected_grasps_with_color(m, ply_name_, title, obj_):
                 collision_grasp_num += 1
 
         if save_fig:
+            mlab.title(info_good, size=0.5)
             mlab.savefig("good_"+title+".png")
+
             mlab.close()
         elif show_fig:
-            mlab.title(title, size=0.5)
+            mlab.title(info_good, size=0.5)
 
-        # fig 2: bad grasps
-        mlab.figure(bgcolor=(1, 1, 1), fgcolor=(0.7, 0.7, 0.7), size=(1000, 1000))
-        mlab.pipeline.surface(mlab.pipeline.open(ply_name_))
 
-        for a in m_bad:
-            # display_gripper_on_object(obj, a)  # real gripper
-            collision_free = display_grasps(a, obj_, color=(1, 0, 0))
-            if not collision_free:
-                collision_grasp_num += 1
-
-        if save_fig:
-            mlab.savefig("bad_"+title+".png")
-            mlab.close()
-        elif show_fig:
-            mlab.title(title, size=0.5)
-            mlab.show()
+        if len(m_bad)!=0:#
+            # fig 2: bad grasps
+            mlab.figure(bgcolor=(1, 1, 1), fgcolor=(0.7, 0.7, 0.7), size=(1000, 1000))
+            mlab.pipeline.surface(mlab.pipeline.open(ply_name_))
+            for a in m_bad:
+                # display_gripper_on_object(obj, a)  # real gripper
+                collision_free = display_grasps(a, obj_, color=(1, 0, 0))
+                if not collision_free:
+                    collision_grasp_num += 1
+            if save_fig:
+                mlab.title(info_bad, size=0.5)
+                mlab.savefig("bad_"+title+".png")
+                mlab.close()
+            elif show_fig:
+                mlab.title(info_bad, size=0.5)
+                mlab.show()
     elif generate_new_file:
         # only to calculate collision:
         collision_grasp_num = 0

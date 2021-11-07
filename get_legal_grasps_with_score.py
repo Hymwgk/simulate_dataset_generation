@@ -6,6 +6,7 @@ import argparse
 import time
 import mayavi
 import numpy as np
+import torch
 import pickle
 import glob
 import multiprocessing
@@ -21,7 +22,7 @@ from numpy.core.fromnumeric import swapaxes
 #解析命令行参数
 parser = argparse.ArgumentParser(description='Get legal grasps with score')
 parser.add_argument('--gripper', type=str, default='baxter')   #
-parser.add_argument('--process_num', type=int, default=70)  #设置同时处理几个场景
+parser.add_argument('--process_num', type=int, default=1)  #设置同时处理几个场景
 
 args = parser.parse_args()
 
@@ -204,6 +205,152 @@ def get_inner_points(grasp_bottom_center, approach_normal, binormal,
     # print("points_in_area", way, len(points_in_area))
     #返回是否有点has_p，以及，内部点的索引list
     return len(points_in_area_index),insert_dist
+
+def collision_check_pc_cuda(centers,poses,scores,pc,minimum_points_num=30,minimum_insert_dist=0.01):
+    """对CTG抓取姿态和Cpc进行碰撞检测(使用显卡加速计算)
+    """
+    #对旋转后的抓取，逐个进行碰撞检测，并把没有碰撞的抓取保存下来
+    bottom_centers = centers -ags.gripper.hand_depth * poses[:,:,0] 
+    hand_points = ags.get_hand_points(np.array([0, 0, 0]), np.array([1, 0, 0]), np.array([0, 1, 0]))#
+    #mask =np.zeros(centers.shape[0])
+    poses_cuda=torch.from_numpy(poses).cuda()
+    mask_cuda = torch.zeros(centers.shape[0]).cuda()
+    hand_points= torch.from_numpy(hand_points).cuda()
+    bottom_centers = torch.from_numpy(bottom_centers).cuda()
+    pc = torch.from_numpy(pc).cuda()
+
+    #对每个抓取进行碰撞检测
+    for i in range(len(bottom_centers)):
+        '''
+        approach_normal = poses_cuda[i,:,0] #approach轴
+        binormal = poses_cuda[i,:,1]#
+        minor_pc = poses_cuda[i,:,2]
+        #单位化
+        approach_normal = approach_normal.reshape(1, 3)
+        approach_normal = approach_normal / torch.norm(approach_normal)
+
+        binormal = binormal.reshape(1, 3)
+        binormal = binormal / torch.norm(binormal)
+
+        minor_pc = minor_pc.reshape(1, 3)
+        minor_pc = minor_pc / torch.norm(minor_pc)
+
+        #得到标准的旋转矩阵
+        matrix = torch.cat((approach_normal.T, binormal.T, minor_pc.T),dim=1)
+        '''
+        matrix = poses_cuda[i]
+        #转置=求逆（酉矩阵）
+        grasp_matrix = matrix.T  # same as cal the inverse
+
+        #获取所有的点相对于夹爪底部中心点的向量
+        points = pc        
+        points = points - bottom_centers[i].reshape(1, 3)
+        tmp = torch.mm(grasp_matrix, points.T)
+        points_g = tmp.T
+        #查找左侧夹爪碰撞检查
+        points_p = points_g.repeat(4,1,1)
+        points_n = points_g.repeat(4,1,1)
+        gripper_points_p = torch.tensor([hand_points[4][0],hand_points[2][1],hand_points[1][2],
+                                                                    hand_points[12][0],hand_points[9][1],hand_points[10][2],
+                                                                    hand_points[3][0],hand_points[13][1],hand_points[2][2],
+                                                                    hand_points[12][0],hand_points[15][1],hand_points[11][2]]).reshape(4,1,-1).cuda()
+
+        gripper_points_n = torch.tensor([hand_points[8][0],hand_points[1][1],hand_points[4][2],
+                                                                    hand_points[10][0],hand_points[1][1],hand_points[9][2],
+                                                                    hand_points[7][0],hand_points[2][1],hand_points[3][2],
+                                                                    hand_points[20][0],hand_points[11][1],hand_points[12][2]]).reshape(4,1,-1).cuda()
+
+        points_p = points_p-gripper_points_p
+        points_n = points_n-gripper_points_n
+        check_op =torch.where(torch.sum((torch.mul(points_p,points_n)<0)[0],dim=1)==3)[0]
+
+        #check_c = (torch.mul(points_p,points_n)<0)[1:]
+        check_ = torch.where(torch.sum((torch.mul(points_p,points_n)<0)[1:],dim=2)==3)[0]
+
+        '''
+        pc1=points_g - torch.tensor([hand_points[12][0],hand_points[9][1],hand_points[10][2]]).reshape(1,3).cuda()
+        pc2=points_g - torch.tensor([hand_points[10][0],hand_points[1][1],hand_points[9][2]]).reshape(1,3).cuda()
+        check_l=torch.mul(pc1,pc2)<0#元素为True代表有碰撞
+        print(check_l.any())#
+        pc3=points_g - torch.tensor([hand_points[3][0],hand_points[13][1],hand_points[2][2]]).reshape(1,3).cuda()
+        pc4=points_g - torch.tensor([hand_points[7][0],hand_points[2][1],hand_points[3][2]]).reshape(1,3).cuda()
+        check_r=torch.mul(pc3,pc4)<0#元素为True代表有碰撞
+        print(check_r.any())#
+        pc5=points_g - torch.tensor([hand_points[12][0],hand_points[15][1],hand_points[11][2]]).reshape(1,3).cuda()
+        pc6=points_g - torch.tensor([hand_points[20][0],hand_points[11][1],hand_points[12][2]]).reshape(1,3).cuda()
+        check_b=torch.mul(pc5,pc6)<0#元素为True代表有碰撞
+        print(check_b.any())#
+        
+        if check_b.any() or check_l.any() or check_r.any():
+            mask_cuda[i]=1
+        
+        a1 = hand_points[9][1] < points_g[:, 1]    #y
+        a2 = hand_points[1][1] > points_g[:, 1]
+        a3 = hand_points[9][2] > points_g[:, 2]    #z
+        a4 = hand_points[10][2] < points_g[:, 2]
+        a5 = hand_points[10][0] > points_g[:, 0]    #x
+        a6 = hand_points[12][0] < points_g[:, 0]
+        #右侧夹爪碰撞检测
+        a7 = hand_points[2][1] < points_g[:, 1]    #y
+        a8 = hand_points[13][1] > points_g[:, 1]
+        a9 = hand_points[2][2] > points_g[:, 2]    #z
+        a10 = hand_points[3][2] < points_g[:, 2]
+        a11 = hand_points[3][0] > points_g[:, 0]    #x
+        a12 = hand_points[7][0] < points_g[:, 0]
+        #底部碰撞检测
+        a13 = hand_points[11][1] < points_g[:, 1]    #y
+        a14 = hand_points[15][1] > points_g[:, 1]
+        a15 = hand_points[11][2] > points_g[:, 2]    #z
+        a16 = hand_points[12][2] < points_g[:, 2]
+        a17 = hand_points[12][0] > points_g[:, 0]    #x
+        a18 = hand_points[20][0] < points_g[:, 0]
+
+        left =  torch.cat((a1, a2, a3, a4, a5, a6),dim=0).reshape(6,-1)
+        right =  torch.cat((a7,a8,a9,a10,a11,a12),dim=0).reshape(6,-1)
+        bottom = torch.cat((a13,a14,a15,a16,a17,a18),dim=0).reshape(6,-1)
+
+        points_in_left = torch.where(torch.sum(left, dim=0) == len(left))[0]
+        points_in_right = torch.where(torch.sum(right, dim=0) == len(right))[0]
+        points_in_bottom = torch.where(torch.sum(bottom, dim=0) == len(bottom))[0]
+        #碰撞的点云index
+        points_in_gripper_index = torch.cat((points_in_left,points_in_right,points_in_bottom),dim = 0)
+        #夹爪内部点检查
+        a19 = hand_points[1][1] < points_g[:, 1]    #y
+        a20 = hand_points[2][1] > points_g[:, 1]
+        a21 = hand_points[1][2] > points_g[:, 2]    #z
+        a22 = hand_points[4][2] < points_g[:, 2]
+        a23 = hand_points[4][0] > points_g[:, 0]    #x
+        a24 = hand_points[8][0] < points_g[:, 0]
+        close_area = torch.cat((a19,a20,a21,a22,a23,a24),dim=0).reshape(6,-1)
+        #闭合区域内部点云index
+        #points_in_close_area_index=torch.where(torch.sum(close_area, dim=0) == len(close_area))[0]
+        points_in_close_area=points_g[torch.sum(close_area, dim=0) == len(close_area)] #(-1,3)
+        '''
+
+
+        points_in_close_area=points_g[check_op] #(-1,3)
+        #if points_in_gripper_index.shape[0] == 0:#不存在夹爪点云碰撞
+        if len(check_)==0:
+            collision = False
+            #检查夹爪内部点数是否够
+            if points_in_close_area.shape[0]!=0:
+                deepist_point_x =  torch.min(points_in_close_area[:,0])
+                insert_dist = ags.gripper.hand_depth-deepist_point_x.cpu()
+                #设置夹爪内部点的最少点数,以及插入夹爪的最小深度
+                if  len(points_in_close_area)<minimum_points_num  or insert_dist<minimum_insert_dist:
+                    mask_cuda[i]=1
+
+        else:
+            collision = True
+            mask_cuda[i]=1
+    
+    mask = mask_cuda.cpu()
+    good_grasps_center = centers[mask==0]
+    good_free_grasps_pose = poses[mask==0]
+    good_scores = scores[mask==0]
+    bad_grasps_center = centers[mask==1]
+    bad_free_grasps_pose = poses[mask==1]
+    return good_grasps_center,good_free_grasps_pose,good_scores,bad_grasps_center,bad_free_grasps_pose
 
 def collision_check_pc(centers,poses,scores,pc):
     """对CTG抓取姿态和Cpc进行碰撞检测
@@ -411,7 +558,7 @@ def do_job(scene_index):
 
     #对旋转后的抓取，逐个进行碰撞检测，并把没有碰撞的抓取保存下来
     temp_good_grasps_center,temp_good_grasps_pose,temp_good_grasps_score,bad_centers,bad_poses\
-        =collision_check_pc(grasps_center,grasps_pose,grasps_score,pc)
+        =collision_check_pc_cuda(grasps_center,grasps_pose,grasps_score,pc)
 
     #显示点云与抓取，仅限于debug
     #show_grasps_pc(pc,temp_good_grasps_center,temp_good_grasps_pose,
@@ -435,10 +582,6 @@ def do_job(scene_index):
     #show_grasps_pc(pc,temp_good_grasps_center,temp_good_grasps_pose,
     #bad_centers,bad_poses,title='限制抓取角度')
 
-    #限制夹爪内部点云点最小数量，以及限制夹爪内部点云的最小深度
-    temp_good_grasps_center,temp_good_grasps_pose,temp_good_grasps_score,bad_centers,bad_poses\
-        =restrict_pc_num_deepth(temp_good_grasps_center,temp_good_grasps_pose,
-        temp_good_grasps_score,pc,30,0.01)
 
     #显示点云与抓取，仅限于debug
     #show_grasps_pc(pc,temp_good_grasps_center,temp_good_grasps_pose,
@@ -478,7 +621,7 @@ def do_job(scene_index):
     #保存为'legal_grasp_with_score.npy'
     save_path =os.path.join(os.path.split(raw_pc_path)[0],'legal_grasps_with_score.npy')
     np.save(save_path,legal_grasps_vector)
-    print('Saved ',save_path)
+    print('Job done ',save_path,'  good grasps num',len(legal_grasps_vector))
 
 
 

@@ -4,6 +4,7 @@ import os
 import sys
 import argparse
 import time
+from matplotlib.pyplot import axis
 import mayavi
 import numpy as np
 import pickle
@@ -15,8 +16,8 @@ from dexnet.grasping import GpgGraspSampler
 from mayavi import mlab
 from tqdm import tqdm
 from dexnet.grasping import RobotGripper
-from numpy.core.fromnumeric import swapaxes
-
+from numpy.core.fromnumeric import swapaxes, transpose
+import torch
 
 #解析命令行参数
 parser = argparse.ArgumentParser(description='Get legal grasps with score')
@@ -25,6 +26,8 @@ parser.add_argument('--load_npy',action='store_true')  #设置同时处理几个
 
 args = parser.parse_args()
 
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+print(device)
 
 def get_files_path(file_dir_,filename = None):  
     file_list = []
@@ -218,10 +221,69 @@ def collision_check_pc(centers,poses,scores,pc):
         minor_pc = poses[i,:,2]
         hand_points = ags.get_hand_points(np.array([0, 0, 0]), np.array([1, 0, 0]), np.array([0, 1, 0]))#
         #检查与点云的碰撞情况
-        collision = ags.check_collide(bottom_centers[i],approach_normal,
-                                binormal,minor_pc,pc,hand_points,vis=False)
-        if  collision:
+        #collision = ags.check_collide(bottom_centers[i],approach_normal,
+        #                        binormal,minor_pc,pc,hand_points,vis=False)
+
+        #单位化
+        approach_normal = approach_normal.reshape(1, 3)
+        approach_normal = approach_normal / np.linalg.norm(approach_normal)
+
+        binormal = binormal.reshape(1, 3)
+        binormal = binormal / np.linalg.norm(binormal)
+
+        minor_pc = minor_pc.reshape(1, 3)
+        minor_pc = minor_pc / np.linalg.norm(minor_pc)
+
+        #得到标准的旋转矩阵
+        matrix = np.hstack([approach_normal.T, binormal.T, minor_pc.T])
+        #转置=求逆（酉矩阵）
+        grasp_matrix = matrix.T  # same as cal the inverse
+
+        #获取所有的点相对于夹爪底部中心点的向量
+        points = pc
+        
+        points = points - bottom_centers[i].reshape(1, 3)
+        tmp = np.dot(grasp_matrix, points.T)
+        points_g = tmp.T
+        
+        #points_g = pc
+
+        #查找左侧夹爪碰撞检查
+        a1 = hand_points[9][1] < points_g[:, 1]    #y
+        a2 = hand_points[1][1] > points_g[:, 1]
+        a3 = hand_points[9][2] > points_g[:, 2]    #z
+        a4 = hand_points[10][2] < points_g[:, 2]
+        a5 = hand_points[10][0] > points_g[:, 0]    #x
+        a6 = hand_points[12][0] < points_g[:, 0]
+        #右侧夹爪碰撞检测
+        a7 = hand_points[2][1] < points_g[:, 1]    #y
+        a8 = hand_points[13][1] > points_g[:, 1]
+        a9 = hand_points[2][2] > points_g[:, 2]    #z
+        a10 = hand_points[3][2] < points_g[:, 2]
+        a11 = hand_points[3][0] > points_g[:, 0]    #x
+        a12 = hand_points[7][0] < points_g[:, 0]
+        #底部碰撞检测
+        a13 = hand_points[11][1] < points_g[:, 1]    #y
+        a14 = hand_points[15][1] > points_g[:, 1]
+        a15 = hand_points[11][2] > points_g[:, 2]    #z
+        a16 = hand_points[12][2] < points_g[:, 2]
+        a17 = hand_points[12][0] > points_g[:, 0]    #x
+        a18 = hand_points[20][0] < points_g[:, 0]
+
+        left = np.vstack([a1, a2, a3, a4, a5, a6])
+        right = np.vstack([a7,a8,a9,a10,a11,a12])
+        bottom = np.vstack([a13,a14,a15,a16,a17,a18])
+        points_in_left = np.where(np.sum(left, axis=0) == len(left))[0]
+        points_in_right = np.where(np.sum(right, axis=0) == len(right))[0]
+        points_in_bottom = np.where(np.sum(bottom, axis=0) == len(bottom))[0]
+        points_in_area = np.concatenate((points_in_left,points_in_right,points_in_bottom),axis = 0)
+        if len(points_in_area) == 0:
+            #不存在点
+            collision = False
+        else:
+            collision = True
             mask[i]=1
+            
     good_grasps_center = centers[mask==0]
     good_free_grasps_pose = poses[mask==0]
     good_scores = scores[mask==0]
@@ -229,7 +291,109 @@ def collision_check_pc(centers,poses,scores,pc):
     bad_free_grasps_pose = poses[mask==1]
     return good_grasps_center,good_free_grasps_pose,good_scores,bad_grasps_center,bad_free_grasps_pose
 
-def collision_check_table(centers,poses,scores,table_hight = 0.75,safe_dis = 0.0):
+def collision_check_pc_cuda(centers,poses,scores,pc,minimum_points_num=30,minimum_insert_dist=0.01):
+    """对CTG抓取姿态和Cpc进行碰撞检测(使用显卡加速计算)
+    """
+    #对旋转后的抓取，逐个进行碰撞检测，并把没有碰撞的抓取保存下来
+    bottom_centers = centers -ags.gripper.hand_depth * poses[:,:,0] 
+    hand_points = ags.get_hand_points(np.array([0, 0, 0]), np.array([1, 0, 0]), np.array([0, 1, 0]))#
+    #mask =np.zeros(centers.shape[0])
+    poses_cuda=torch.from_numpy(poses).cuda()
+    mask_cuda = torch.zeros(centers.shape[0]).cuda()
+    hand_points= torch.from_numpy(hand_points).cuda()
+    bottom_centers = torch.from_numpy(bottom_centers).cuda()
+    pc = torch.from_numpy(pc).cuda()
+
+    gripper_points_p = torch.tensor([hand_points[4][0],hand_points[2][1],hand_points[1][2],
+                                                                hand_points[12][0],hand_points[9][1],hand_points[10][2],
+                                                                hand_points[3][0],hand_points[13][1],hand_points[2][2],
+                                                                hand_points[12][0],hand_points[15][1],hand_points[11][2]]).reshape(4,1,-1).cuda()
+
+    gripper_points_n = torch.tensor([hand_points[8][0],hand_points[1][1],hand_points[4][2],
+                                                                hand_points[10][0],hand_points[1][1],hand_points[9][2],
+                                                                hand_points[7][0],hand_points[2][1],hand_points[3][2],
+                                                                hand_points[20][0],hand_points[11][1],hand_points[12][2]]).reshape(4,1,-1).cuda()
+
+    #对每个抓取进行碰撞检测
+    for i in tqdm(range(len(bottom_centers)),desc='collision_check_pc'):
+        #得到标准的旋转矩阵
+        matrix = poses_cuda[i]
+        #转置=求逆（酉矩阵）
+        grasp_matrix = matrix.T  # same as cal the inverse
+        #获取所有的点相对于夹爪底部中心点的向量
+        points = pc - bottom_centers[i].reshape(1, 3)
+        points_g = torch.mm(grasp_matrix, points.T).T
+        #查找左侧夹爪碰撞检查
+        points_p = points_g.repeat(4,1,1)
+        points_n = points_g.repeat(4,1,1)
+
+        points_p = points_p-gripper_points_p
+        points_n = points_n-gripper_points_n
+        check_op =torch.where(torch.sum((torch.mul(points_p,points_n)<0)[0],dim=1)==3)[0]
+
+        #check_c = (torch.mul(points_p,points_n)<0)[1:]
+        check_ = torch.where(torch.sum((torch.mul(points_p,points_n)<0)[1:],dim=2)==3)[0]
+
+        points_in_close_area=points_g[check_op] #(-1,3)
+        #if points_in_gripper_index.shape[0] == 0:#不存在夹爪点云碰撞
+        if len(check_)==0:
+            collision = False
+            #检查夹爪内部点数是否够
+            if points_in_close_area.shape[0]!=0:
+                deepist_point_x =  torch.min(points_in_close_area[:,0])
+                insert_dist = ags.gripper.hand_depth-deepist_point_x.cpu()
+                #设置夹爪内部点的最少点数,以及插入夹爪的最小深度
+                if  len(points_in_close_area)<minimum_points_num  or insert_dist<minimum_insert_dist:
+                    mask_cuda[i]=1
+
+        else:
+            collision = True
+            mask_cuda[i]=1
+    
+    mask = mask_cuda.cpu()
+    good_grasps_center = centers[mask==0]
+    good_free_grasps_pose = poses[mask==0]
+    good_scores = scores[mask==0]
+    bad_grasps_center = centers[mask==1]
+    bad_free_grasps_pose = poses[mask==1]
+    return good_grasps_center,good_free_grasps_pose,good_scores,bad_grasps_center,bad_free_grasps_pose
+
+
+
+def collision_check_table_cuda(centers,poses,scores,table_hight = 0.75,safe_dis = 0.005):
+    """对夹爪进行批量的碰桌子检测，夹爪上面的最低点不允许低于桌子高度
+    """
+    #先批量取出虚拟夹爪各点相对于相机坐标系C的坐标
+    #批量获取bottom_centers 用于碰撞检测
+    bottom_centers = centers -ags.gripper.hand_depth * poses[:,:,0] 
+    bottom_centers = torch.from_numpy(bottom_centers).cuda()
+
+    Gp = ags.get_hand_points(np.array([0, 0, 0]), np.array([1, 0, 0]), np.array([0, 1, 0]))#
+    Gp = torch.transpose(torch.from_numpy(Gp).repeat(centers.shape[0],1,1),1,2).cuda()
+
+    poses_cuda =torch.from_numpy(poses).cuda()
+    Cp = torch.matmul(poses_cuda,Gp)+bottom_centers.reshape(-1,3,1)#Cgp
+
+    world_to_scaner_rot_cuda = torch.from_numpy(world_to_scaner_rot).repeat(centers.shape[0],1,1).cuda()
+    world_to_scaner_trans_cuda = torch.from_numpy(world_to_scaner_trans).cuda()
+
+    Wp =  torch.matmul(world_to_scaner_rot_cuda,Cp)+world_to_scaner_trans_cuda.reshape(1,3,1)#
+
+    #也求出世界坐标系下的点云坐标
+    #w_pc=np.matmul(world_to_scaner_rot,pc.T).T   +   world_to_scaner_trans.reshape(1,3) #(-1,3)
+    #判断夹爪各点是否低于桌面高度，设置容忍值
+    lowest_points =torch.min(Wp[:,2,1:],dim = 1,keepdim = True)[0]#np.where()
+    #最低点高于桌面的抓取为True
+    mask = lowest_points.cpu().numpy()>(table_hight+safe_dis)
+    mask = mask.flatten()#(-1,)
+    temp_grasps_center = centers[mask] #(-1,3)
+    temp_grasps_pose = poses[mask]  #(-1,3,3)
+    temp_grasps_scores = scores[mask]#(-1,)
+    bad_centers = centers[~mask] #(-1,3)
+    bad_poses = poses[~mask]  #(-1,3,3)
+    return temp_grasps_center,temp_grasps_pose,temp_grasps_scores,bad_centers,bad_poses
+
+def collision_check_table(centers,poses,scores,table_hight = 0.75,safe_dis = 0.005):
     """对夹爪进行批量的碰桌子检测，夹爪上面的最低点不允许低于桌子高度
     """
     #先批量取出虚拟夹爪各点相对于相机坐标系C的坐标
@@ -245,13 +409,14 @@ def collision_check_table(centers,poses,scores,table_hight = 0.75,safe_dis = 0.0
     #求出虚拟夹爪各角点相对于世界坐标系W的坐标
     w_gp = np.swapaxes(np.matmul(world_to_scaner_rot,np.swapaxes(grasps_hand_points,1,2)),1,2)+\
                                                 world_to_scaner_trans.reshape(1,3) #(-1,21,3)
+
     #也求出世界坐标系下的点云坐标
-    w_pc=np.matmul(world_to_scaner_rot,pc.T).T+\
-                                                world_to_scaner_trans.reshape(1,3) #(-1,3)
+    #w_pc=np.matmul(world_to_scaner_rot,pc.T).T+world_to_scaner_trans.reshape(1,3) #(-1,3)
+
     #判断夹爪各点是否低于桌面高度，设置容忍值
     lowest_points = np.min(w_gp[:,1:,2],axis = 1,keepdims = True)#np.where()
     #最低点高于桌面的抓取为True
-    mask = lowest_points>table_hight+safe_dis
+    mask = lowest_points>(table_hight+safe_dis)
     mask = mask.flatten()#(-1,)
     temp_grasps_center = centers[mask] #(-1,3)
     temp_grasps_pose = poses[mask]  #(-1,3,3)
@@ -280,6 +445,7 @@ def restrict_approach_angle(centers,poses,scores,max_angle=50):
     bad_centers = centers[~mask]
     bad_poses = poses[~mask]
     return temp_grasps_center,temp_grasps_pose,temp_grasps_score,bad_centers,bad_poses
+
 
 def restrict_pc_num_deepth(centers,poses,scores,minimum_points_num=30,minimum_insert_dist=0.01):
     """限制夹爪内部点云点最小数量，以及限制夹爪内部点云的最小深度
@@ -317,6 +483,15 @@ def show_grasps_pc(pc,good_centers,good_poses,bad_centers=None,bad_poses=None,ti
     mlab.figure(figure=title+'_good grasp',bgcolor=(1, 1, 1), fgcolor=(0.7, 0.7, 0.7), size=(1000, 1000))#创建一个窗口
     _ = show_points(pc)
     print(title+'_good grasp:{}'.format(good_centers.shape[0]))
+    max_n =200 
+    if good_centers.shape[0]>max_n:
+        print(title+'_good grasp:{} ,  show random {} grasps here'.format(good_centers.shape[0],max_n))
+        mask = random.sample(range(good_centers.shape[0]),max_n)
+        good_centers=good_centers[mask]
+        good_poses = good_poses[mask]
+    else:
+        print(title+'_bad grasp:{}'.format(good_centers.shape[0]))
+
     for index,center in enumerate(good_centers):
         display_grasps(center,good_poses[index],color="d")
         grasp_bottom_center = -ags.gripper.hand_depth * good_poses[index][:,0] + center
@@ -411,7 +586,8 @@ if __name__ == '__main__':
             if mesh_name =='bg_table':
                 continue
             for path in candidate_grasp_score_list:
-                if path.find(mesh_name)!=-1:
+                #if path.find(mesh_name)!=-1:
+                if mesh_name in path:
                     grasps_with_score = np.load(path) #(-1,11)
 
             #MTG 列表
@@ -445,44 +621,50 @@ if __name__ == '__main__':
         else:
             #显示点云与抓取，仅限于debug
             #show_grasps_pc(pc,grasps_center,grasps_pose,title='raw_grasps')
+            print('Start job ', raw_pc_path)
 
             #对旋转后的抓取，逐个进行碰撞检测，并把没有碰撞的抓取保存下来
-            print('collision_check_pc')
+            before = len(grasps_center)
             temp_good_grasps_center,temp_good_grasps_pose,temp_good_grasps_score,bad_centers,bad_poses\
-                =collision_check_pc(grasps_center,grasps_pose,grasps_score,pc)
-
+                =collision_check_pc_cuda(grasps_center,grasps_pose,grasps_score,pc)
+            print('Collision_check_pc done:  ',before,' to ',len(temp_good_grasps_center))
+            
+            '''
+            #限制夹爪内部点云点最小数量，以及限制夹爪内部点云的最小深度（已经集成到与点云碰撞检查了）
+            print('restrict_pc_num_deepth')
+            temp_good_grasps_center,temp_good_grasps_pose,temp_good_grasps_score,bad_centers,bad_poses\
+                =restrict_pc_num_deepth(temp_good_grasps_center,temp_good_grasps_pose,
+                temp_good_grasps_score,30,0.01)
+            '''
             #显示点云与抓取，仅限于debug
             #show_grasps_pc(pc,temp_good_grasps_center,temp_good_grasps_pose,
             #bad_centers,bad_poses,title='夹爪点云碰撞检测')
 
             #保存不与桌子碰撞的抓取
-            print('collision_check_table')
+            before = len(temp_good_grasps_center)
             temp_good_grasps_center,temp_good_grasps_pose,temp_good_grasps_score,bad_centers,bad_poses\
-                =collision_check_table(temp_good_grasps_center,temp_good_grasps_pose,temp_good_grasps_score)
+                =collision_check_table_cuda(temp_good_grasps_center,temp_good_grasps_pose,temp_good_grasps_score)
+            print('Collision_check_table done:  ',before,' to ',len(temp_good_grasps_center))
 
             #显示点云与抓取，仅限于debug
             #show_grasps_pc(pc,temp_good_grasps_center,temp_good_grasps_pose,
             #bad_centers,bad_poses,title='夹爪桌面碰撞检测')
 
             #限制抓取approach轴与桌面垂直方向的角度
-            print('restrict_approach_angle')
+            before = len(temp_good_grasps_center)
             temp_good_grasps_center,temp_good_grasps_pose,temp_good_grasps_score,bad_centers,bad_poses\
                 =restrict_approach_angle(temp_good_grasps_center,temp_good_grasps_pose,
                 temp_good_grasps_score,max_angle=50)
+            print('Restrict_approach_angle done:  ',before,' to ',len(temp_good_grasps_center))
 
             #显示点云与抓取，仅限于debug
             #show_grasps_pc(pc,temp_good_grasps_center,temp_good_grasps_pose,
             #bad_centers,bad_poses,title='限制抓取角度')
 
-            #限制夹爪内部点云点最小数量，以及限制夹爪内部点云的最小深度
-            print('restrict_pc_num_deepth')
-            temp_good_grasps_center,temp_good_grasps_pose,temp_good_grasps_score,bad_centers,bad_poses\
-                =restrict_pc_num_deepth(temp_good_grasps_center,temp_good_grasps_pose,
-                temp_good_grasps_score,30,0.01)
 
             #显示点云与抓取，仅限于debug
-            show_grasps_pc(pc,temp_good_grasps_center,temp_good_grasps_pose,
-            bad_centers,bad_poses,title='限制夹爪内部点数与深度')
+            #show_grasps_pc(pc,temp_good_grasps_center,temp_good_grasps_pose,
+            #bad_centers,bad_poses,title='限制夹爪内部点数与深度')
 
 
             #将抓取转变回8d（7+1）向量保存（相对于相机坐标系）
@@ -506,18 +688,16 @@ if __name__ == '__main__':
             #再接上分数
             legal_grasps_vector = np.concatenate((legal_grasps_vector,temp_good_grasps_score),axis=1)
 
-            print(legal_grasps_vector)
+            #print(legal_grasps_vector)
             #将拼接好的7d抓取向量，再次转化为旋转和平移两部分，显示出来,debug
             temp_good_grasps_center = legal_grasps_vector[:,0:3]
             temp_good_grasps_pose = get_rot_mat(legal_grasps_vector)
             #show_grasps_pc(pc,temp_good_grasps_center,temp_good_grasps_pose,title='重显')
-        
 
-
-        #保存为'legal_grasp_with_score.npy'
-        #save_path =os.path.join(os.path.split(raw_pc_path)[0],'legal_grasps_with_score.npy')
-        #np.save(save_path,legal_grasps_vector)
-
+            #保存为'legal_grasp_with_score.npy'
+            save_path =os.path.join(os.path.split(raw_pc_path)[0],'legal_grasps_with_score.npy')
+            np.save(save_path,legal_grasps_vector)
+            print('Job done ',save_path,'  good grasps num',len(legal_grasps_vector))
 
 
 
