@@ -44,9 +44,7 @@ scenes_dir = home_dir+"/dataset/simulate_grasp_dataset/{}/scenes/".format(parame
 legal_grasp_file_paths = glob.glob(scenes_dir+'*/legal_grasps_with_score.npy')
 legal_grasp_file_paths.sort()
 
-table_pc_list = glob.glob(scenes_dir+'*/table_pc.npy')
-table_pc_list.sort()
-
+final_dir = home_dir+"/dataset/simulate_grasp_dataset/{}/final/".format(parameters.gripper)
 
 yaml_config = YamlConfig(home_dir + "/code/dex-net/test/config.yaml")
 gripper = RobotGripper.load(parameters.gripper, home_dir + "/code/dex-net/data/grippers")
@@ -64,7 +62,7 @@ print(device)
 class Mask_generate:
     '''根据已有的抓取生成点云mask
     '''
-    def __init__(self,grasp_file_paths,parameters,sampler,show_result='False',dense_pc=False) -> None:
+    def __init__(self,grasp_file_paths,final_dir,parameters,sampler,show_result=False,dense_pc=False) -> None:
         '''grasp_file_paths  抓取文件的路径
             parameters   命令行参数
             sampler   dex抓取采样器
@@ -74,7 +72,8 @@ class Mask_generate:
         self.scene_num = len(grasp_file_paths)
         self.parameters = parameters
         self.sampler = sampler
-        self.dense_pc =dense_pc
+        self.dense_pc = dense_pc
+        self.final_dir = final_dir #存放最终文件的文件夹
 
         if show_result:
             #显示结果，测试用
@@ -82,20 +81,58 @@ class Mask_generate:
 
         else:
             #首先计算每个抓取之间的差别
-            self.compute_grasp_diff()
+            #self.compute_grasp_diff()
             #多进程进行场景抓取聚类，排序
-            self.grasp_grouping()
+            #self.grasp_grouping()
             #对每个场景的每个合法抓取进行夹爪周边点云索引计算，并保存
-            self.compute_neighbor_points()
+            #self.compute_neighbor_points()
             #计算mask
-            self.mask_generate()
+            #self.mask_generate()
+
+            self.generate_final_files()
+
+    def generate_final_files(self):
+        if not os.path.exists(self.final_dir):
+            os.makedirs(self.final_dir)
+
+        max_digits = len(str(len(self.grasp_file_paths)))
+        #scene_dir = os.path.join(scenes_dir+str(scene_n).zfill(max_digits))
+
+        for scene_index,grasp_file in enumerate(self.grasp_file_paths):
+            #读取场景grasps
+            data = np.load(grasp_file, allow_pickle=True).item()
+            #删除不必要的数据
+            keys = list(data.keys())
+            for key in keys:
+                if '_temp' in key:
+                    del data[key]
+
+            #保存
+            final_path = os.path.join(self.final_dir,str(scene_index).zfill(max_digits)+'.npy')
+            np.save(final_path,data)
+            print('Final file {}  done')
+
+            '''
+            dir  = os.path.dirname(grasp_file)
+            ob = glob.glob(dir+'/*.pickle')
+            for file in ob:
+                if 'table_meshes_with_pose' in file:
+                    pass
+                else:
+                    os.remove(file)
+            '''
+
+
+            
 
 
     
     def show_result(self):
-        for scene_index,grasp_file in enumerate(self.grasp_file_paths):
+        final_files = glob.glob(self.final_dir+'*.npy')
+        final_files.sort()
+        for scene_index,final_file in enumerate(final_files):
             #读取场景grasps
-            data = np.load(grasp_file, allow_pickle=True).item()
+            data = np.load(final_file, allow_pickle=True).item()
             grasp_num = len(data['grasp_centers'])
 
             print('Scene  {}'.format(scene_index)+ '  legal grasp:{}'.format(grasp_num))
@@ -106,7 +143,7 @@ class Mask_generate:
                 pc = data['pc'] #场景点云
             mask = data['grasp_mask']
             self.show_mask(pc,mask) 
-            time.sleep(0.5)
+            time.sleep(0.1)
             #mlab.close()     
 
 
@@ -181,8 +218,8 @@ class Mask_generate:
             theta = torch.abs(torch.acos(cosa))< self.parameters.theta_min#[len(grasp),len(grasp)]
 
             #保存距离矩阵
-            data['grasp_dis_diff'] = grasp_centers_diff_dis.cpu().numpy()
-            data['grasp_pose_diff'] = theta.cpu().numpy()
+            data['grasp_dis_diff_temp'] = grasp_centers_diff_dis.cpu().numpy()
+            data['grasp_pose_diff_temp'] = theta.cpu().numpy()
 
             #更新数据
             np.save(grasp_file,data)
@@ -223,75 +260,102 @@ class Mask_generate:
         '''
         '''
         for scene_index,grasp_file in enumerate(self.grasp_file_paths):
-            if scene_index==14:
-                print('a')
 
             data = np.load(grasp_file, allow_pickle=True).item()
             print('Scene {}: Looking for grasp neighbor points'.format(scene_index))
             grasps_neighbor_points_index=self.get_gripper_neighor_points_cuda(data)
 
             #保存每个抓取周边的point index  
-            data['grasp_neighbor_points'] = grasps_neighbor_points_index
+            data['grasp_neighbor_points_temp'] = grasps_neighbor_points_index
             #更新数据
             np.save(grasp_file,data)
 
 
     def mask_generate(self):
-        for scene_index,grasp_file in enumerate(self.grasp_file_paths):
-            #读取场景grasps
-            data = np.load(grasp_file, allow_pickle=True).item()
-            grasp_num = len(data['grasp_centers'])
+        '''多线程生成mask
+        '''
+        pool_size=self.parameters.process_num  #选择同时使用多少个进程处理
+        cores = multiprocessing.cpu_count()
+        if pool_size>cores:
+            pool_size = cores
+            print('Cut pool size down to cores num')
+        if pool_size>self.scene_num:
+            pool_size = self.scene_num
+        print('We got {} pc, and pool size is {}'.format(self.scene_num,pool_size))
+        scene_index = 0
+        pool = []
+        for i in range(pool_size):  
+            pool.append(multiprocessing.Process(target=self.do_job_mask,args=(scene_index,)))
+            scene_index+=1
+        [p.start() for p in pool]  #启动多线程
 
-            print('Scene  {}'.format(scene_index)+ '  legal grasp:{}'.format(grasp_num))
-
-            if self.dense_pc:
-                pc = data['dense_pc']
-            else:
-                pc = data['pc'] #场景点云
-            grasp_clusters = data['grasp_clusters']
-            grasp_neighbor_points = data['grasp_neighbor_points']
-            #hand_points = data['hand_points']
-
-            clusters_sets = []#所有簇对应的内部点索引集合
-
-            #计算每个cluster内各个点的索引
-            for cluster in grasp_clusters:
-                cluster_grasps_index = cluster[0]  #当前簇内部的抓取index
-                points_in_cluster = set()#当前簇中的点索引集合
-
-                for grasp_index in cluster_grasps_index:
-                    points_in_grasp = set(grasp_neighbor_points[grasp_index])#grasp_index 对应的抓取内部的点index转化为集合
-                    #求与当前簇中点索引集合的并集
-                    points_in_cluster = points_in_cluster.union(points_in_grasp)
-                clusters_sets.append(points_in_cluster)#所有簇对应的内部点索引集合
+        while scene_index<self.scene_num:    #如果有些没处理完
+            for ind, p in enumerate(pool):
+                if not p.is_alive():
+                    pool.pop(ind)
+                    p = multiprocessing.Process(target=self.do_job_mask, args=(scene_index,))
+                    scene_index+=1
+                    p.start()
+                    pool.append(p)
+                    break
+        [p.join() for p in pool]  #启动多线程
 
 
-            raw_cluster_num = len(clusters_sets)
-            #self.show_clusters(pc,clusters_sets)
+    def do_job_mask(self,scene_index):
+        grasp_file = self.grasp_file_paths[scene_index]
+        #读取场景grasps
+        data = np.load(grasp_file, allow_pickle=True).item()
+        grasp_num = len(data['grasp_centers'])
 
-            #检查iou
-            clusters_sets = self.iou_check(pc,clusters_sets)
-            #self.show_clusters(pc,clusters_sets)
-            clusters_num = len(clusters_sets)
-            #制作mask
-            mask = np.zeros((pc.shape[0],10)).astype(int)
+        print('Scene  {}'.format(scene_index)+ '  legal grasp:{}'.format(grasp_num))
 
-            for i in range(10):
-                if i<clusters_num:
-                    mask[list(clusters_sets[i]),i]=1
+        if self.dense_pc:
+            pc = data['dense_pc']
+        else:
+            pc = data['pc'] #场景点云
+        grasp_clusters = data['grasp_clusters_temp']
+        grasp_neighbor_points = data['grasp_neighbor_points_temp']
+        #hand_points = data['hand_points']
 
-            #self.show_mask(pc,mask)
+        clusters_sets = []#所有簇对应的内部点索引集合
 
-            #存起来
-            data['clusters'] =clusters_sets
-            #self.show_clusters(pc,clusters_sets)
-            data['grasp_mask'] =mask
+        #计算每个cluster内各个点的索引
+        for cluster in grasp_clusters:
+            cluster_grasps_index = cluster[0]  #当前簇内部的抓取index
+            points_in_cluster = set()#当前簇中的点索引集合
 
-            #保存
-            np.save(grasp_file,data)
+            for grasp_index in cluster_grasps_index:
+                points_in_grasp = set(grasp_neighbor_points[grasp_index])#grasp_index 对应的抓取内部的点index转化为集合
+                #求与当前簇中点索引集合的并集
+                points_in_cluster = points_in_cluster.union(points_in_grasp)
+            clusters_sets.append(points_in_cluster)#所有簇对应的内部点索引集合
 
-            
-            print('Generate scene {} mask done, from {} to {}'.format(scene_index, raw_cluster_num, clusters_num))
+
+        raw_cluster_num = len(clusters_sets)
+        #self.show_clusters(pc,clusters_sets)
+
+        #检查iou
+        clusters_sets = self.iou_check(pc,clusters_sets)
+        #self.show_clusters(pc,clusters_sets)
+        clusters_num = len(clusters_sets)
+        #制作mask
+        mask = np.zeros((pc.shape[0],10)).astype(int)
+
+        for i in range(10):
+            if i<clusters_num:
+                mask[list(clusters_sets[i]),i]=1
+
+        #self.show_mask(pc,mask)
+
+        #存起来
+        data['clusters_temp'] =clusters_sets
+        #self.show_clusters(pc,clusters_sets)
+        data['grasp_mask'] =mask
+
+        #保存
+        np.save(grasp_file,data)
+   
+        print('Generate scene {} mask done, from {} to {}'.format(scene_index, raw_cluster_num, clusters_num))
 
 
 
@@ -431,8 +495,8 @@ class Mask_generate:
         #多线程聚类
         data = np.load(grasp_file, allow_pickle=True).item()
 
-        grasp_dis_diff = data['grasp_dis_diff']
-        grasp_pose_diff = data['grasp_pose_diff']
+        grasp_dis_diff = data['grasp_dis_diff_temp']
+        grasp_pose_diff = data['grasp_pose_diff_temp']
         grasp_score = data['grasp_score']
 
         grasp_clusters = []
@@ -475,7 +539,7 @@ class Mask_generate:
         #    grasp_clusters = grasp_clusters[:30]
 
         #保存group with score
-        data['grasp_clusters']=grasp_clusters
+        data['grasp_clusters_temp']=grasp_clusters
         np.save(grasp_file,data)
 
         #当前场景聚类完毕    
@@ -637,6 +701,7 @@ if __name__ == '__main__':
 
     do_job = Mask_generate(
         legal_grasp_file_paths,
+        final_dir,
         parameters,
         graspSampler,
         show_result=True,
