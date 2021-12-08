@@ -8,7 +8,6 @@
 # File Name  : generate-dataset-canny.py
 # 运行之前需要对各个cad文件生成sdf文件
 
-from get_legal_grasps_with_score import get_rot_mat
 import numpy as np
 import sys
 import pickle
@@ -24,8 +23,12 @@ import glob
 import time
 import multiprocessing
 import matplotlib.pyplot as plt
+import open3d as o3d
+from tqdm import tqdm
+
 plt.switch_backend('agg')  # for the convenient of run on remote computer
 
+import torch 
 import argparse
 
 #解析命令行参数
@@ -34,7 +37,7 @@ parser.add_argument('--gripper', type=str, default='baxter')
 #b : breakpoint sample  断点采样
 #r:  re-sample  重采样
 #p: post-process  后续处理
-parser.add_argument('--mode', type=str, choices=['b', 'r', 'p'],default='p')
+parser.add_argument('--mode', type=str, choices=['b', 'r', 'p','c'],default='c')
 '''
 每个模型的抓取期望数量为 target_n = rounds*process_n*grasp_n
 可以根据自己的电脑配置来手动更改这几个参数，参考期望数量为6000以上
@@ -42,9 +45,9 @@ parser.add_argument('--mode', type=str, choices=['b', 'r', 'p'],default='p')
 #设置采集几轮
 parser.add_argument('--rounds', type=int,default=1)
 #设置每轮用多少个线程同时采样一个mesh的抓取
-parser.add_argument('--process_n', type=int,default=70) #60
-#设置每个线程采集的目标抓取数量
-parser.add_argument('--grasp_n', type=int,default=200) #200
+parser.add_argument('--process_n', type=int,default=60) #60
+#设置每个线程采集的目标抓取数量，这个数字不会决定最少才多少，而是最多采多少，是一个上限
+parser.add_argument('--grasp_n', type=int,default=500) #200
 
 
 
@@ -76,7 +79,7 @@ def do_job(job_id,grasps_with_score):      #处理函数  处理index=i的模型
         dex_net_graspable, #目标抓取对象
         target_num_grasps=args.grasp_n,  #每轮采样的目标抓取数量
         grasp_gen_mult=10,                                         
-        max_iter=20,                 #为了达到目标数量，最多进行的迭代次数
+        max_iter=6,                 #为了达到目标数量，最多进行的迭代次数
         vis=False, #不显示采样结果(多进程该选项无效)
         random_approach_angle=True)
 
@@ -411,6 +414,250 @@ def coverage_check(grasps_score):
     return grasp_stay
 
 
+def get_rot_mat(poses_vector):
+
+    major_pc = poses_vector[:,3:6]  # [len(grasps),3]
+
+    angle = poses_vector[:,[7]]# [len(grasps),3]
+
+
+    # cal approach
+    cos_t = np.cos(angle)   #[len(grasps),1]
+    sin_t = np.sin(angle)    #[len(grasps),1]
+    zeros= np.zeros(cos_t.shape)  #[len(grasps),1]
+    ones = np.ones(cos_t.shape) #[len(grasps),1]
+
+    #绕抓取y轴旋转angle角度的旋转矩阵
+    #R1 = np.c_[cos_t, zeros, sin_t,zeros, ones, zeros,-sin_t, zeros, cos_t].reshape(-1,3,3) #[len(grasps),3,3]
+    R1 = np.c_[cos_t, zeros, -sin_t,zeros, ones, zeros,sin_t, zeros, cos_t].reshape(-1,3,3) #[len(grasps),3,3]
+    #print(R1)
+    axis_y = major_pc #(-1,3)
+
+    #设定一个与抓取y轴垂直且与C:x-o-y平面平行的单位向量作为初始x轴
+    axis_x = np.c_[axis_y[:,[1]], -axis_y[:,[0]], zeros]
+    #查找模为0的行，替换为[1,0,0]
+    axis_x[np.linalg.norm(axis_x,axis=1)==0]=np.array([1,0,0])
+    #单位化
+    axis_x = axis_x / np.linalg.norm(axis_x,axis=1,keepdims=True)
+    axis_y = axis_y / np.linalg.norm(axis_y,axis=1,keepdims=True)
+    #右手定则，从x->y  
+    axis_z = np.cross(axis_x, axis_y)
+
+    #这个R2就是一个临时的夹爪坐标系，但是它的姿态还不代表真正的夹爪姿态
+    R2 = np.c_[axis_x, np.c_[axis_y, axis_z]].reshape(-1,3,3).swapaxes(1,2)
+    #将现有的坐标系利用angle进行旋转，就得到了真正的夹爪坐标系，
+    # 抽出x轴作为approach轴(原生dex-net夹爪坐标系)
+    #由于是相对于运动坐标系的旋转，因此需要右乘
+    R3=np.matmul(R2,R1)  #(-1,3,3)
+
+    return R3
+
+
+
+
+
+
+def display_grasps(grasp,pc,grasp_bottom_center_,p,grasps_pose):
+    """
+    显示给定的抓取，做一下碰撞检测，和指定颜色
+    grasp：单个抓取
+    graspable：目标物体（仅做碰撞）
+    color：夹爪的颜色
+    """
+    center_point = grasp[0:3]    #夹爪中心(指尖中心)
+    major_pc = grasp[3:6]  # binormal
+    width = grasp[6]
+    angle = grasp[7]
+    level_score, refine_score = grasp[-2:]
+    # cal approach
+    cos_t = np.cos(angle)
+    sin_t = np.sin(angle)
+    #绕抓取y轴的旋转矩阵
+    R1 = np.c_[[cos_t, 0, sin_t],[0, 1, 0],[-sin_t, 0, cos_t]]
+    #print(R1)
+
+    axis_y = major_pc
+    #设定一个与y轴垂直且与世界坐标系x-o-y平面平行的单位向量作为初始x轴
+    axis_x = np.array([axis_y[1], -axis_y[0], 0])
+    if np.linalg.norm(axis_x) == 0:
+        axis_x = np.array([1, 0, 0])
+    #单位化
+    axis_x = axis_x / np.linalg.norm(axis_x)
+    axis_y = axis_y / np.linalg.norm(axis_y)
+    #右手定则，从x->y  
+    axis_z = np.cross(axis_x, axis_y)
+    
+    #这个R2就是一个临时的夹爪坐标系，但是它的姿态还不代表真正的夹爪姿态
+    R2 = np.c_[axis_x, np.c_[axis_y, axis_z]]
+
+    #将现有的坐标系利用angle进行旋转，就得到了真正的夹爪坐标系，
+    # 抽出x轴作为approach轴(原生dex-net夹爪坐标系)
+    #由于是相对于运动坐标系的旋转，因此需要右乘
+    approach_normal = R2.dot(R1)[:, 0]
+    approach_normal = approach_normal / np.linalg.norm(approach_normal)
+
+
+    minor_pc = np.cross( approach_normal,major_pc)
+
+
+    #单位化
+    approach_normal = approach_normal.reshape(1, 3)
+    approach_normal = approach_normal / np.linalg.norm(approach_normal)
+
+    major_pc = major_pc.reshape(1, 3)
+    major_pc = major_pc / np.linalg.norm(major_pc)
+
+    minor_pc = minor_pc.reshape(1, 3)
+    minor_pc = minor_pc / np.linalg.norm(minor_pc)
+
+    #得到标准的旋转矩阵
+    matrix = np.hstack([approach_normal.T, major_pc.T, minor_pc.T])
+
+
+    #a = np.abs(grasps_pose-matrix)<0.001
+    #print(a)
+
+    #转置=求逆（酉矩阵）
+    grasp_matrix = matrix.T  # same as cal the inverse
+
+    grasp_bottom_center = -grasp_sampler.gripper.hand_depth * approach_normal + center_point
+
+    #print(grasp_bottom_center_)
+    #print(grasp_bottom_center)
+
+    points = pc
+    #获取所有的点相对于夹爪底部中心点的向量
+    points = points - grasp_bottom_center.reshape(1, 3)
+    #points_g = points @ grasp_matrix
+    tmp = np.dot(grasp_matrix, points.T)
+    points_g = tmp.T
+
+    mode = ["p_left", "p_right", "p_bottom"]
+
+    has_p = np.zeros(3)
+
+    for i in range(len(mode)):
+        way = mode[i]
+        #p_open 代表，检查闭合区域内部有没有点，不包含夹爪自身碰撞，只是看夹爪内部有没有点云
+        if way == "p_open": 
+            s1, s2, s4, s8 = p[1], p[2], p[4], p[8]
+        #判断右侧夹爪本身，有没有与点云产生碰撞
+        elif way == "p_left":
+            s1, s2, s4, s8 = p[9], p[1], p[10], p[12]
+        #判断左侧夹爪本身，有没有与点云产生碰撞
+        elif way == "p_right":
+            s1, s2, s4, s8 = p[2], p[13], p[3], p[7]
+        #判断顶端夹爪本身，有没有与点云产生碰撞
+        elif way == "p_bottom":
+            s1, s2, s4, s8 = p[11], p[15], p[12], p[20]
+        else:
+            raise ValueError('No way!')
+        #查找points_g中所有y坐标大于p1点的y坐标
+        a1 = s1[1] < points_g[:, 1]    #y
+        a2 = s2[1] > points_g[:, 1]
+        a3 = s1[2] > points_g[:, 2]    #z
+        a4 = s4[2] < points_g[:, 2]
+        a5 = s4[0] > points_g[:, 0]    #x
+        a6 = s8[0] < points_g[:, 0]
+
+        a = np.vstack([a1, a2, a3, a4, a5, a6])
+        points_in_area = np.where(np.sum(a, axis=0) == len(a))[0]
+        if len(points_in_area) == 0:
+            #不存在点
+            has_p[i] = 0
+        else:
+            has_p[i] = 1
+
+    if np.sum(has_p)>0:
+
+        return has_p
+    else:
+        return []
+
+
+
+def collision_check_cuda(grasps,graspable):
+    """对CTG抓取姿态和Cpc进行碰撞检测(使用显卡加速计算)
+    """
+
+    #判断points是不是点云
+    if isinstance(graspable, dexnet.grasping.graspable_object.GraspableObject3D):
+        #不是的话
+        points = graspable.sdf.surface_points(grid_basis=False)[0]
+    else:#是的话
+        points = graspable
+
+    #抽取出位置和姿态
+    grasps_center = grasps[:,0:3]   #[len(grasps),3]
+    grasps_pose = get_rot_mat(grasps)  #[len(grasps),3,3]
+
+    
+    #对旋转后的抓取，逐个进行碰撞检测，并把没有碰撞的抓取保存下来
+    bottom_centers = grasps_center -grasp_sampler.gripper.hand_depth * grasps_pose[:,:,0] 
+    hand_points = grasp_sampler.get_hand_points(np.array([0, 0, 0]), np.array([1, 0, 0]), np.array([0, 1, 0]))#
+    #mask =np.zeros(centers.shape[0])
+    poses_cuda=torch.from_numpy(grasps_pose).cuda()
+    mask_cuda = torch.zeros(grasps_center.shape[0]).cuda()
+    hand_points_cuda= torch.from_numpy(hand_points).cuda()
+    bottom_centers_cuda = torch.from_numpy(bottom_centers).cuda()
+    points_cuda = torch.from_numpy(points).cuda()
+
+    #对每个抓取进行碰撞检测
+    for i in range(len(bottom_centers_cuda)):
+
+        matrix = poses_cuda[i]
+        #转置=求逆（酉矩阵）
+        grasp_matrix = matrix.T  # same as cal the inverse
+
+        #获取所有的点相对于夹爪底部中心点的向量
+        points_ = points_cuda - bottom_centers_cuda[i].reshape(1, 3)  #[pc_num,3]
+        tmp = torch.mm(grasp_matrix, points_.T)
+        points_g = tmp.T  #[pc_num,3]
+
+
+
+        #points_g = display_grasps(grasps[i],points,bottom_centers[i],hand_points)
+
+        #debug
+        #points_g = torch.tensor([(hand_points[12][0]+hand_points[10][0])/2,(hand_points[9][1]+hand_points[1][1])/2,(hand_points[10][2]+hand_points[9][2])/2,#夹爪本体
+        #                                                            (hand_points[3][0]+hand_points[7][0])/2,(hand_points[13][1]+hand_points[2][1])/2,(hand_points[2][2]+hand_points[3][2])/2,
+        #                                                            (hand_points[12][0]+hand_points[20][0])/2,(hand_points[15][1]+hand_points[11][1])/2,(hand_points[11][2]+hand_points[12][2])/2]).reshape(-1,3).cuda()
+
+        #查找左侧夹爪碰撞检查  
+        points_g = points_g.repeat(3,1,1) #[3,pc_num,3]
+
+        gripper_points_p = torch.tensor([hand_points_cuda[12][0],hand_points_cuda[9][1],hand_points_cuda[10][2],#夹爪本体
+                                                                    hand_points_cuda[3][0],hand_points_cuda[13][1],hand_points_cuda[2][2],
+                                                                    hand_points_cuda[12][0],hand_points_cuda[15][1],hand_points_cuda[11][2]]).reshape(3,1,3).cuda()
+
+        gripper_points_n = torch.tensor([hand_points_cuda[10][0],hand_points_cuda[1][1],hand_points_cuda[9][2],#夹爪本体
+                                                                    hand_points_cuda[7][0],hand_points_cuda[2][1],hand_points_cuda[3][2],
+                                                                    hand_points_cuda[20][0],hand_points_cuda[11][1],hand_points_cuda[12][2]]).reshape(3,1,3).cuda()
+
+        points_p = points_g - gripper_points_p #[3,pc_num,3]
+        points_n = points_g - gripper_points_n
+        #check_op =torch.where(torch.sum((torch.mul(points_p,points_n)<0)[0],dim=1)==3)[0]
+
+        #check_c = (torch.mul(points_p,points_n)<0)[1:]
+        check_  = torch.where(torch.sum((torch.mul(points_p,points_n)<0),dim=2).flatten()==3)[0]
+
+        #check_=display_grasps(grasps[i],points,bottom_centers[i],hand_points,grasps_pose[i])
+
+        if len(check_)==0: #夹爪本体碰撞点数为0
+            collision = False
+        else:
+            collision = True
+            mask_cuda[i]=1
+    
+    mask = mask_cuda.cpu().numpy()
+
+    grasps = grasps[mask==0]
+        
+    return grasps
+
+
+
+
 if __name__ == '__main__':
 
     gripper_name=args.gripper
@@ -449,7 +696,7 @@ if __name__ == '__main__':
     
     mangaer = multiprocessing.Manager()
     #b模式（断点采样模式）和r模式（重新采样模式）
-    if args.mode!='p':
+    if args.mode=='b' or args.mode=='r' :
         #对每个待抓取模型采样候选抓取
         for obj_index, object_path in enumerate(file_list_all):
             grasps_with_score =mangaer.list()#多进程共享列表
@@ -495,7 +742,47 @@ if __name__ == '__main__':
                 pickle.dump(original_grasps, f)
         print("All job done")
 
-    else:#process mode，读取预先生成好的原始抓取文件做分数筛选等处理
+    elif args.mode =='c': #对生成的抓取进行碰撞检查，去掉与模型有碰撞的抓取
+        npy_files = glob.glob(grasps_file_dir+'*.npy')  #raw  grasp files path
+        npy_files.sort()
+
+        ply_files = glob.glob(file_dir+'*/*/*/*.ply')
+        ply_files.sort()
+
+
+        for i in tqdm(range(len(npy_files)),desc='collision_check'):
+            object_name = ply_files[i].split('/')[-3]
+            grasp = np.load(npy_files[i]) #[len(grasps),12]
+            #获取原始点云
+            mesh = o3d.io.read_triangle_mesh(ply_files[i])
+            #得到点云对象
+            raw_pc = o3d.geometry.TriangleMesh.sample_points_uniformly(mesh, np.asarray(mesh.vertices).shape[0] * 10)
+            #均匀降采样
+            voxel_pc = o3d.geometry.PointCloud.voxel_down_sample(raw_pc, 0.0005)
+            #将点云转换为np对象
+            pc = np.asarray(voxel_pc.points)
+
+            #获取原始点云
+            #对这些抓取进行一个抓取碰撞筛选
+            before_collision_check= len(grasp)
+            grasp = collision_check_cuda(grasp,pc)
+            after_collision_check= len(grasp)
+
+            print("{}采样抓取碰撞检查before:{} ,after:{}".format(object_name,before_collision_check,after_collision_check))
+
+            #删除原始npy文件
+            os.remove(npy_files[i])
+
+            np.save(grasps_file_dir+object_name+'.npy',grasp)
+        #grasps_with_score = collision_check_cuda(grasps_with_score,dex_net_graspable)
+
+
+
+
+
+
+
+    elif args.mode=='p' :#process mode，读取预先生成好的原始抓取文件做分数筛选等处理
         print('打分处理模式 -p')
         #尝试获取外部文件列表
         objects_name_list =[]  # 
@@ -512,6 +799,12 @@ if __name__ == '__main__':
             print("There is no original grasp files!")
             sys.exit(1)#表示异常退出程序
 
+
+
+        
+
+
+
         #接着多进程对原始抓取文件进行处理
         pool_size= multiprocessing.cpu_count() #
         if pool_size>len(objects_name_list):#限制进程数小于目标物体数量
@@ -519,7 +812,7 @@ if __name__ == '__main__':
         #pool_size = 1#调试
         obj_index = 0
         pool = []
-        for i in range(pool_size):  
+        for i in range(pool_size): 
             pool.append(multiprocessing.Process(target=grasp_marking,args=(obj_index,)))
             obj_index+=1
         [p.start() for p in pool]  #启动多进程

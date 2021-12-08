@@ -128,7 +128,10 @@ def simulation(scene_i_xml_path):
             pos_old = pos_now
 
     pos_now=pos_now.reshape(-1,7)
-    mesh_on_table = pos_now[:,2]>0.5  #找到稳定姿态的高度低于0.5m的mesh
+    print("警告：这里需要优化，一些物体可能在空中",__file__,sys._getframe().f_lineno)
+    mesh_on_table = pos_now[:,2]>0.5  #找到稳定姿态的高度高于0.5m的mesh
+    #mesh_on_table = mesh_on_table[:,0]
+
     #抽取出满足某个条件的行（保留合法的姿态）
     pos_legal = pos_now[mesh_on_table,:]
     table_pose=np.reshape(table_pose,(-1,7))

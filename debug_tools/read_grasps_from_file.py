@@ -20,6 +20,7 @@ from mayavi import mlab
 from dexnet.grasping import GpgGraspSampler  # temporary way for show 3D gripper using mayavi
 import glob
 import pickle
+import open3d as o3d
 
 import argparse
 
@@ -36,7 +37,7 @@ yaml_config = YamlConfig(home_dir + "/code/dex-net/test/config.yaml")
 gripper = RobotGripper.load(args.gripper, home_dir + "/code/dex-net/data/grippers")
 ags = GpgGraspSampler(gripper, yaml_config)
 
-save_fig = True  # save fig as png file
+save_fig = False  # save fig as png file
 show_fig = True  # show the mayavi figure
 generate_new_file = False  # whether generate new file for collision free grasps
 check_pcd_grasp_points = False
@@ -49,7 +50,9 @@ def open_npy_and_obj(name_to_open_):
     #存放mesh模型的文件夹路径
     file_dir = home_dir + "/dataset/simulate_grasp_dataset/ycb/google_512k/"
     #获取当前模型名称
-    object_name_ = name_to_open_.split("/")[-1].split('_pgpd')[0]
+    object_name_ = name_to_open_.split("/")[-1].split('.npy')[0]
+    #object_name_ = name_to_open_.split("/")[-1].split('_pgpd')[0]
+
     print(object_name_)
 
     ply_path_ = file_dir+object_name_+'_google_512k/'+object_name_+ "/google_512k/nontextured.ply"
@@ -100,6 +103,25 @@ def display_gripper_on_object(obj_, grasp_):
                           # stable_pose=stable_pose,  # .T_obj_world,
                           plot_table=False)
     Vis.show()
+
+def show_points(point, name='pc',color='lb', scale_factor=.0001):
+    if color == 'b':
+        color_f = (0, 0, 1)
+    elif color == 'r':
+        color_f = (1, 0, 0)
+    elif color == 'g':
+        color_f = (0, 1, 0)
+    elif color == 'lb':  # light blue
+        color_f = (0.22, 1, 1)
+    else:
+        color_f = (1, 1, 1)
+    if point.size == 3:  # vis for only one point, shape must be (3,), for shape (1, 3) is not work
+        point = point.reshape(3, )
+        mlab.points3d(point[0], point[1], point[2], color=color_f, scale_factor=scale_factor)
+    else:  # vis for multiple points
+        mlab.points3d(point[:, 0], point[:, 1], point[:, 2], color=color_f, scale_factor=scale_factor)
+
+    return point.shape[0]
 
 
 def display_grasps(grasp, graspable, color):
@@ -153,7 +175,7 @@ def display_grasps(grasp, graspable, color):
     #检测一下夹爪与目标物体的碰撞（这里使用原始函数，不检测与桌面的碰撞）
     if_collide = ags.check_collide(grasp_bottom_center, approach_normal,
                                    major_pc, minor_pc, graspable, local_hand_points)
-
+    if_collide = False
     #只显示夹爪，不显示点云
     if not if_collide and (show_fig or save_fig):
         ags.show_grasp_3d(hand_points, color=color)
@@ -166,7 +188,7 @@ def display_grasps(grasp, graspable, color):
         return False
 
 
-def show_selected_grasps_with_color(m, ply_name_, title, obj_):
+def show_selected_grasps_with_color(m, ply_name_, title, obj_,pc):
     """显示选择出的抓取，将抓取序列中good的抓取和bad的抓取区分开来，并分别显示在两个窗口中
     m：                    针对被抓物体的带有打分的grasp序列
     ply_name_ ： 被抓物体的mesh文件路径
@@ -180,7 +202,7 @@ def show_selected_grasps_with_color(m, ply_name_, title, obj_):
         print('No good grasps! Show next mesh')
         return 0
     #从优质的抓取中随机抽取出25个（如果都要的话，就太多了，不易于显示）
-    max_n =25
+    max_n =50
     if len(m_good)>max_n:
         print('Got {} good grasps, show random {} grasps'.format(len(m_good),max_n))
         info_good = 'Total:{}'.format(len(m)) + ' Good:{}'.format(len(m_good))+' Show:{}'.format(max_n)
@@ -206,7 +228,8 @@ def show_selected_grasps_with_color(m, ply_name_, title, obj_):
         mlab.figure(bgcolor=(1, 1, 1), fgcolor=(0.7, 0.7, 0.7), size=(1000, 1000))
         #导入目标物体的mesh模型
         mlab.pipeline.surface(mlab.pipeline.open(ply_name_))
-        
+        #show_points(pc)
+
         for a in m_good:
             # display_gripper_on_object(obj, a)  # real gripper
             collision_free = display_grasps(a, obj_, color="d")  # simulated gripper
@@ -341,7 +364,21 @@ if __name__ == "__main__":
     for i in range(len(npy_names)):
         #把夹爪姿态和打分，先从npy中读取出来
         grasps_with_score, obj, ply_path, obj_name = open_npy_and_obj(npy_names[i])
+
+        #获取原始点云
+        mesh = o3d.io.read_triangle_mesh(ply_path)
+        #得到点云对象
+        raw_pc = o3d.geometry.TriangleMesh.sample_points_uniformly(mesh, np.asarray(mesh.vertices).shape[0] * 10)
+        #均匀降采样
+        voxel_pc = o3d.geometry.PointCloud.voxel_down_sample(raw_pc, 0.0005)
+        #将点云转换为np对象
+        pc = np.asarray(voxel_pc.points)
+
+
+
         print("load file {}".format(npy_names[i]))
         #显示抓取
-        ind_good_grasp = show_selected_grasps_with_color(grasps_with_score, ply_path, obj_name, obj)
+        if 'banana' not in obj_name:
+            continue
+        ind_good_grasp = show_selected_grasps_with_color(grasps_with_score, ply_path, obj_name, obj,pc)
     print('All done')

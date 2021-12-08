@@ -18,7 +18,10 @@ import time
 #解析命令行参数
 parser = argparse.ArgumentParser(description='Show raw point clouds')
 parser.add_argument('--gripper', type=str, default='baxter')
-parser.add_argument('--show', type=int, default=0)
+parser.add_argument('--raw_pc',  action='store_true')#出现raw 就选择显示原生点云，否则显示降采样后的点云
+
+parser.add_argument('--show', type=int, default=0)#可以选择直接显示某帧点云
+
 args = parser.parse_args()
 
 
@@ -122,11 +125,11 @@ def do_job():
             print('已经按下q 键，关掉点云窗口即可完全退出')
             break
 
-def get_raw_pc_list(file_dir_):  
+def get_raw_pc_list(file_dir_,type='pc.npy'):  
     file_list = []
     for root, dirs, files in os.walk(file_dir_):
         for file in files:
-            if file=='raw_pc.npy':
+            if file==type:
                 file_list.append(os.path.join(root,file))
     #排序
     file_list.sort()
@@ -139,10 +142,15 @@ if __name__ == '__main__':
     home_dir = os.environ['HOME']
     pcs_dir = home_dir+"/dataset/simulate_grasp_dataset/{}/scenes/".format(args.gripper)
     #pcs_path_list = glob.glob(pcs_dir+"*/raw_pc.npy")
-    pcs_path_list = get_raw_pc_list(pcs_dir)  #该方法可以根据场景编号排序
-
-    max_digits = len(pcs_path_list[0].split('/')[-2])
-    selected_path = os.path.join(pcs_dir,str(args.show).zfill(max_digits),'raw_pc.npy')
+    if args.raw_pc:
+        pcs_path_list = get_raw_pc_list(pcs_dir,'raw_pc.npy')  #该方法可以根据场景编号排序
+        max_digits = len(pcs_path_list[0].split('/')[-2])
+        selected_path = os.path.join(pcs_dir,str(args.show).zfill(max_digits),'raw_pc.npy')
+    else:
+        pcs_path_list = get_raw_pc_list(pcs_dir,'pc.npy')  #该方法可以根据场景编号排序
+        max_digits = len(pcs_path_list[0].split('/')[-2])
+        selected_path = os.path.join(pcs_dir,str(args.show).zfill(max_digits),'pc.npy')
+        
 
 
 

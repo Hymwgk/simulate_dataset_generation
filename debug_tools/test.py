@@ -129,6 +129,10 @@ def do_job1(job_id):      #测试多线程进度条
     for i in tqdm(range(100), desc='Processing'+str(job_id)):
         time.sleep(0.5)
 
+def do_job2(id):
+    '''测试多线程下的显卡调用
+    '''
+    
 
 from dexnet.grasping import RobotGripper
 from dexnet.grasping import GpgGraspSampler  

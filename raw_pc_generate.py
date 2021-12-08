@@ -123,7 +123,9 @@ def do_job(scene_index):
             for sp in item.data.vertices:
                 points_list += sp.co[0:3]
             points_array =np.reshape(np.array(points_list),(-1,3))
-            np.save(os.path.join(os.path.split(meshes_with_pose_path)[0],'raw_pc.npy'),points_array)
+            pc_raw = points_array[~np.isnan(points_array).any(axis=1)]
+
+            np.save(os.path.join(os.path.split(meshes_with_pose_path)[0],'raw_pc.npy'),pc_raw)
             print('===saved '+os.path.join(os.path.split(meshes_with_pose_path)[0],'raw_pc.npy'))
 
 
